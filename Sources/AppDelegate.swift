@@ -516,8 +516,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             appState.$isWordPressAgentEnabled,
             appState.$availableAppUpdate
         )
-            .sink { [weak self] _, _, _, _ in
-                self?.updateStatusItemIcon()
+            .sink { [weak self] isRecording, isTranscribing, isWordPressAgentEnabled, availableAppUpdate in
+                self?.updateStatusItemIcon(
+                    isRecording: isRecording,
+                    isTranscribing: isTranscribing,
+                    isWordPressAgentEnabled: isWordPressAgentEnabled,
+                    availableAppUpdate: availableAppUpdate
+                )
             }
 
         menuBarIconVisibilityObserver = NotificationCenter.default.addObserver(
@@ -687,20 +692,34 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func updateStatusItemIcon() {
+        updateStatusItemIcon(
+            isRecording: appState.isRecording,
+            isTranscribing: appState.isTranscribing,
+            isWordPressAgentEnabled: appState.isWordPressAgentEnabled,
+            availableAppUpdate: appState.availableAppUpdate
+        )
+    }
+
+    private func updateStatusItemIcon(
+        isRecording: Bool,
+        isTranscribing: Bool,
+        isWordPressAgentEnabled: Bool,
+        availableAppUpdate: AvailableAppUpdate?
+    ) {
         let image: NSImage?
-        if appState.isRecording {
+        if isRecording {
             image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "WP Workspace")
-        } else if appState.isTranscribing {
+        } else if isTranscribing {
             image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "WP Workspace")
         } else {
             image = Self.menuBarWordPressLogoImage()
         }
 
         image?.isTemplate = true
-        let toolTip = appState.isWordPressAgentEnabled
+        let toolTip = isWordPressAgentEnabled
             ? "Open WordPress Agent. Drop images to upload."
             : "WP Workspace. Drop images to upload."
-        let resolvedToolTip = appState.availableAppUpdate.map { update in
+        let resolvedToolTip = availableAppUpdate.map { update in
             "WP Workspace \(update.version) is available. Right-click for update details."
         } ?? toolTip
 
