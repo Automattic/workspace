@@ -503,14 +503,14 @@ struct WPCOMAgentFrontendAbility: Encodable, Equatable {
     static let preview = WPCOMAgentFrontendAbility(
         name: "wpworkspace/preview",
         label: "Preview URL",
-        description: "Open a web URL in the WP Workspace side preview panel. Replaces any preview that is already open.",
+        description: "Open a public web URL in the WP Workspace side preview panel. Replaces any preview that is already open and opens signed out by default.",
         category: "interface",
         inputSchema: .object([
             "type": .string("object"),
             "properties": .object([
                 "url": .object([
                     "type": .string("string"),
-                    "description": .string("The absolute http or https URL to preview. Bare domains can be passed and WP Workspace will treat them as https URLs. WordPress wp-admin post edit links and frontend post ID URLs are opened with preview=true when possible.")
+                    "description": .string("The absolute public http or https URL to preview. Bare domains can be passed and WP Workspace will treat them as https URLs. Localhost and private-network URLs are rejected. URLs on the active site's domain open signed out by default and offer a user-selected signed-in view; WordPress post/edit URLs can also offer an editor mode.")
                 ]),
                 "title": .object([
                     "type": .string("string"),
