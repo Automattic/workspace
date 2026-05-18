@@ -542,13 +542,14 @@ struct WordPressAgentWindowView: View {
                                 appState.closeWordPressAgentPreview()
                             }
                         },
-                        onPageUpdate: { previewID, currentURL, title, isLoading in
+                        onPageUpdate: { previewID, currentURL, title, isLoading, requiresAuthenticationHint in
                             Task { @MainActor in
                                 appState.updateWordPressAgentPreviewPage(
                                     previewID: previewID,
                                     currentURL: currentURL,
                                     title: title,
-                                    isLoading: isLoading
+                                    isLoading: isLoading,
+                                    requiresAuthenticationHint: requiresAuthenticationHint
                                 )
                             }
                         }
@@ -991,7 +992,7 @@ private struct WordPressAgentPreviewPanel: View {
 
     let preview: WordPressAgentPreview
     let onClose: () -> Void
-    let onPageUpdate: (UUID, URL?, String?, Bool) -> Void
+    let onPageUpdate: (UUID, URL?, String?, Bool, Bool) -> Void
 
     @State private var previewReloadTrigger = 0
     @State private var previewMode: WordPressAgentPreviewViewMode = .signedOut
@@ -999,7 +1000,7 @@ private struct WordPressAgentPreviewPanel: View {
     init(
         preview: WordPressAgentPreview,
         onClose: @escaping () -> Void,
-        onPageUpdate: @escaping (UUID, URL?, String?, Bool) -> Void
+        onPageUpdate: @escaping (UUID, URL?, String?, Bool, Bool) -> Void
     ) {
         self.preview = preview
         self.onClose = onClose
@@ -1127,8 +1128,21 @@ private struct WordPressAgentPreviewPanel: View {
                 .transition(.opacity)
                 .allowsHitTesting(false)
             }
+
+            if showsAuthenticationHint {
+                VStack(spacing: 0) {
+                    authenticationHintBanner
+                        .padding(.horizontal, 10)
+                        .padding(.top, 10)
+
+                    Spacer()
+                }
+                .transition(.opacity)
+                .allowsHitTesting(true)
+            }
         }
         .animation(.easeInOut(duration: 0.16), value: preview.isLoading)
+        .animation(.easeInOut(duration: 0.16), value: showsAuthenticationHint)
     }
 
     private var activePreviewURL: URL {
@@ -1155,6 +1169,55 @@ private struct WordPressAgentPreviewPanel: View {
 
     private var activePreviewViewMode: WordPressAgentPreviewViewMode? {
         effectivePreviewMode
+    }
+
+    private var showsAuthenticationHint: Bool {
+        preview.requiresAuthenticationHint
+            && !preview.isLoading
+            && effectivePreviewMode == .signedOut
+            && previewModeURLs?.signedInURL != nil
+    }
+
+    private var authenticationHintBanner: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "lock.open")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("This page may require sign-in.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Text("Switch to authenticated view to try it with your WordPress.com session.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                previewMode = .preview
+            } label: {
+                Label("Authenticated", systemImage: "eye")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(Color(nsColor: .windowBackgroundColor).opacity(0.96))
+                .shadow(color: .black.opacity(0.14), radius: 16, x: 0, y: 8)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(AgentPalette.separator, lineWidth: 1)
+                )
+        )
     }
 
     private static func initialPreviewMode(for url: URL) -> WordPressAgentPreviewViewMode {
@@ -1374,7 +1437,7 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
     let site: WPCOMSite?
     let viewMode: WordPressAgentPreviewViewMode
     let reloadTrigger: Int
-    let onPageUpdate: (UUID, URL?, String?, Bool) -> Void
+    let onPageUpdate: (UUID, URL?, String?, Bool, Bool) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(previewID: previewID, onPageUpdate: onPageUpdate)
@@ -1410,7 +1473,7 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         var previewID: UUID
-        var onPageUpdate: (UUID, URL?, String?, Bool) -> Void
+        var onPageUpdate: (UUID, URL?, String?, Bool, Bool) -> Void
         private var loadedURL: URL?
         // Keep the user's requested URL separate from the URL WebKit actually
         // loads. The effective URL can include frame-nonce and unmapped-host
@@ -1427,8 +1490,11 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
         private var site: WPCOMSite?
         private var viewMode: WordPressAgentPreviewViewMode = .signedOut
         private var loadTask: Task<Void, Never>?
+        private var lastMainFrameStatusCode: Int?
+        private var lastMainFrameResponseURL: URL?
+        private var lastReportedRequiresAuthenticationHint: Bool?
 
-        init(previewID: UUID, onPageUpdate: @escaping (UUID, URL?, String?, Bool) -> Void) {
+        init(previewID: UUID, onPageUpdate: @escaping (UUID, URL?, String?, Bool, Bool) -> Void) {
             self.previewID = previewID
             self.onPageUpdate = onPageUpdate
         }
@@ -1473,10 +1539,17 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
             let requestedPreviewURL = Self.redactedPreviewDisplayURL(initialPreviewURL)
             visiblePreviewURL = requestedPreviewURL
             internalEffectivePreviewURL = nil
+            lastMainFrameStatusCode = nil
+            lastMainFrameResponseURL = nil
 
             loadTask?.cancel()
             isShowingPreparationBackground = false
-            reportPageUpdate(url: requestedPreviewURL, title: nil, isLoading: true)
+            reportPageUpdate(
+                url: requestedPreviewURL,
+                title: nil,
+                isLoading: true,
+                requiresAuthenticationHint: false
+            )
             webView.load(URLRequest(url: initialPreviewURL))
 
             let siteID = siteID
@@ -1501,7 +1574,12 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
                     return
                 }
 
-                self.reportPageUpdate(url: requestedPreviewURL, title: webView.title, isLoading: true)
+                self.reportPageUpdate(
+                    url: requestedPreviewURL,
+                    title: webView.title,
+                    isLoading: true,
+                    requiresAuthenticationHint: false
+                )
                 webView.reloadFromOrigin()
             }
         }
@@ -1574,6 +1652,18 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
 
         func webView(
             _ webView: WKWebView,
+            decidePolicyFor navigationResponse: WKNavigationResponse,
+            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+        ) {
+            if navigationResponse.isForMainFrame {
+                lastMainFrameResponseURL = navigationResponse.response.url
+                lastMainFrameStatusCode = (navigationResponse.response as? HTTPURLResponse)?.statusCode
+            }
+            decisionHandler(.allow)
+        }
+
+        func webView(
+            _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
             decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
         ) {
@@ -1585,6 +1675,11 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
             if Self.isWebKitInternalURL(url) {
                 decisionHandler(.allow)
                 return
+            }
+
+            if navigationAction.targetFrame?.isMainFrame != false {
+                lastMainFrameStatusCode = nil
+                lastMainFrameResponseURL = nil
             }
 
             if isInternalEffectivePreviewNavigation(url) {
@@ -1680,23 +1775,48 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
 
         private func reportPageUpdate(_ webView: WKWebView, isLoading: Bool) {
             let safeURL = visiblePreviewURL ?? webView.url.map(Self.redactedPreviewDisplayURL)
-            reportPageUpdate(url: safeURL, title: webView.title, isLoading: isLoading)
+            let title = webView.title
+            reportPageUpdate(
+                url: safeURL,
+                title: title,
+                isLoading: isLoading,
+                requiresAuthenticationHint: shouldShowAuthenticationHint(
+                    url: safeURL,
+                    title: title,
+                    isLoading: isLoading
+                )
+            )
         }
 
         private func showPreparationBackground(in webView: WKWebView, visibleURL: URL) {
             isShowingPreparationBackground = true
-            reportPageUpdate(url: visibleURL, title: nil, isLoading: true)
+            reportPageUpdate(
+                url: visibleURL,
+                title: nil,
+                isLoading: true,
+                requiresAuthenticationHint: false
+            )
             webView.loadHTMLString(Self.previewPreparationHTML, baseURL: nil)
         }
 
         private func reportPreparationBackgroundUpdate() {
-            reportPageUpdate(url: visiblePreviewURL, title: nil, isLoading: true)
+            reportPageUpdate(
+                url: visiblePreviewURL,
+                title: nil,
+                isLoading: true,
+                requiresAuthenticationHint: false
+            )
         }
 
         private func showLoadFailure(_ error: Error, in webView: WKWebView) {
             let failedURL = visiblePreviewURL ?? webView.url.map(Self.redactedPreviewDisplayURL)
             let title = "Preview unavailable"
-            reportPageUpdate(url: failedURL, title: title, isLoading: false)
+            reportPageUpdate(
+                url: failedURL,
+                title: title,
+                isLoading: false,
+                requiresAuthenticationHint: false
+            )
             webView.loadHTMLString(
                 Self.previewFailureHTML(
                     url: failedURL?.absoluteString,
@@ -1706,16 +1826,52 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
             )
         }
 
-        private func reportPageUpdate(url: URL?, title: String?, isLoading: Bool) {
+        private func reportPageUpdate(
+            url: URL?,
+            title: String?,
+            isLoading: Bool,
+            requiresAuthenticationHint: Bool
+        ) {
             guard lastReportedURL != url
                 || lastReportedTitle != title
-                || lastReportedIsLoading != isLoading else {
+                || lastReportedIsLoading != isLoading
+                || lastReportedRequiresAuthenticationHint != requiresAuthenticationHint else {
                 return
             }
             lastReportedURL = url
             lastReportedTitle = title
             lastReportedIsLoading = isLoading
-            onPageUpdate(previewID, url, title, isLoading)
+            lastReportedRequiresAuthenticationHint = requiresAuthenticationHint
+            onPageUpdate(previewID, url, title, isLoading, requiresAuthenticationHint)
+        }
+
+        private func shouldShowAuthenticationHint(url: URL?, title: String?, isLoading: Bool) -> Bool {
+            guard !isLoading, viewMode == .signedOut else { return false }
+
+            if let statusCode = lastMainFrameStatusCode,
+               [401, 403, 404].contains(statusCode) {
+                return true
+            }
+
+            let responseOrVisibleURL = lastMainFrameResponseURL ?? url
+            if responseOrVisibleURL.map(Self.isAuthenticationGateURL) == true {
+                return true
+            }
+
+            let normalizedTitle = title?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() ?? ""
+            guard !normalizedTitle.isEmpty else { return false }
+
+            if normalizedTitle.contains("log in") || normalizedTitle.contains("login") {
+                return true
+            }
+
+            return normalizedTitle.contains("access denied")
+                || normalizedTitle.contains("unauthorized")
+                || normalizedTitle.contains("forbidden")
+                || normalizedTitle.contains("page not found")
+                || normalizedTitle.contains("not found")
         }
 
         private static func isWebKitInternalURL(_ url: URL) -> Bool {
@@ -1751,6 +1907,13 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
                 return false
             }
 
+            return path == "/wp-login.php"
+                || path.hasPrefix("/log-in")
+                || path.hasPrefix("/oauth")
+        }
+
+        private static func isAuthenticationGateURL(_ url: URL) -> Bool {
+            let path = url.path.lowercased()
             return path == "/wp-login.php"
                 || path.hasPrefix("/log-in")
                 || path.hasPrefix("/oauth")

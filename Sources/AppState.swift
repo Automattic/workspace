@@ -115,6 +115,7 @@ struct WordPressAgentPreview: Identifiable, Equatable {
     let pageTitle: String?
     let siteID: Int?
     let isLoading: Bool
+    let requiresAuthenticationHint: Bool
 
     init(
         id: UUID = UUID(),
@@ -123,13 +124,15 @@ struct WordPressAgentPreview: Identifiable, Equatable {
         title: String? = nil,
         pageTitle: String? = nil,
         siteID: Int? = nil,
-        isLoading: Bool = false
+        isLoading: Bool = false,
+        requiresAuthenticationHint: Bool = false
     ) {
         self.id = id
         self.url = url
         self.currentURL = currentURL ?? url
         self.siteID = siteID
         self.isLoading = isLoading
+        self.requiresAuthenticationHint = requiresAuthenticationHint
         let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.title = trimmedTitle?.isEmpty == false ? trimmedTitle : nil
         let trimmedPageTitle = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -140,7 +143,12 @@ struct WordPressAgentPreview: Identifiable, Equatable {
         pageTitle ?? title ?? currentURL.host ?? currentURL.absoluteString
     }
 
-    func updatingCurrentPage(url currentURL: URL?, title pageTitle: String?, isLoading: Bool) -> WordPressAgentPreview {
+    func updatingCurrentPage(
+        url currentURL: URL?,
+        title pageTitle: String?,
+        isLoading: Bool,
+        requiresAuthenticationHint: Bool
+    ) -> WordPressAgentPreview {
         let resolvedCurrentURL = currentURL ?? self.currentURL
         let trimmedPageTitle = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedPageTitle: String?
@@ -159,7 +167,8 @@ struct WordPressAgentPreview: Identifiable, Equatable {
             title: title,
             pageTitle: resolvedPageTitle,
             siteID: siteID,
-            isLoading: isLoading
+            isLoading: isLoading,
+            requiresAuthenticationHint: requiresAuthenticationHint
         )
     }
 }
@@ -2191,13 +2200,15 @@ final class AppState: ObservableObject, @unchecked Sendable {
         previewID: UUID,
         currentURL: URL?,
         title: String?,
-        isLoading: Bool
+        isLoading: Bool,
+        requiresAuthenticationHint: Bool
     ) {
         guard let preview = wordpressAgentPreview, preview.id == previewID else { return }
         let updatedPreview = preview.updatingCurrentPage(
             url: currentURL,
             title: title,
-            isLoading: isLoading
+            isLoading: isLoading,
+            requiresAuthenticationHint: requiresAuthenticationHint
         )
         guard updatedPreview != preview else { return }
 
