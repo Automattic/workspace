@@ -352,7 +352,26 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isImageDropOverlayTargeted = false
     private var statusItem: NSStatusItem?
     private var statusItemView: StatusItemDropView?
-    private let archiveTimeSlipOverlayManager = ArchiveTimeSlipOverlayManager()
+    private lazy var writingEscapeOverlayManager: WritingEscapeOverlayManager = {
+        let manager = WritingEscapeOverlayManager()
+        manager.onError = { [weak self] message in
+            self?.appState.errorMessage = message
+        }
+        manager.onSaved = { [weak self] guideline, editURL, siteID in
+            Task { @MainActor in
+                guard let self else { return }
+                self.appState.statusText = "Saved writing artifact #\(guideline.id)"
+                self.appState.debugStatusMessage = "Saved writing artifact #\(guideline.id)"
+                let conversationID = self.appState.startWordPressAgentConversation(siteID: siteID)
+                self.appState.openWordPressAgentPreview(
+                    url: editURL,
+                    title: "Writing Artifact #\(guideline.id)",
+                    conversationID: conversationID
+                )
+            }
+        }
+        return manager
+    }()
     private var statusIconCancellable: AnyCancellable?
     private var agentPreviewCancellable: AnyCancellable?
     private var menuBarIconVisibilityObserver: NSObjectProtocol?
@@ -418,7 +437,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appUpdateCheckTimer?.invalidate()
         appUpdateCheckTimer = nil
         removeMenuBarDragMonitors()
-        archiveTimeSlipOverlayManager.dismiss(animated: false)
+        writingEscapeOverlayManager.dismiss()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -893,31 +912,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
-        let timeSlipItem = actionItem("Take Me Back to 2004", imageName: "clock.arrow.circlepath") { [weak self] in
+        let writeToEscapeItem = actionItem("Write to Escape", imageName: "square.and.pencil") { [weak self] in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                self?.showArchiveTimeSlipOverlay()
+                self?.showWritingEscapeOverlay()
             }
         }
-        timeSlipItem.isEnabled = !appState.isRecording && !appState.isTranscribing
-        menu.addItem(timeSlipItem)
+        writeToEscapeItem.isEnabled = appState.isWordPressComSignedIn
+            && appState.selectedWordPressComSiteID != nil
+            && !appState.isRecording
+            && !appState.isTranscribing
+        menu.addItem(writeToEscapeItem)
 
-        addDisabledItem("Phrase trigger later: Workspace, take me back to 2004.", to: menu)
+        addDisabledItem("Phrase trigger later: Workspace, write to escape.", to: menu)
         return menu
     }
 
-    private func showArchiveTimeSlipOverlay() {
-        guard AXIsProcessTrusted() else {
-            appState.showAccessibilityAlert()
+    private func showWritingEscapeOverlay() {
+        guard appState.isWordPressComSignedIn,
+              let site = appState.selectedWordPressComSite else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
             return
         }
 
-        appState.refreshLatestExternalAppSnapshot()
-        let snapshot = appState.latestExternalAppSnapshot
-        let site = snapshot
-            .flatMap { appState.effectiveWordPressComSite(for: $0.bundleIdentifier) }
-            ?? appState.selectedWordPressComSite
-        let context = ArchiveTimeSlipContext(snapshot: snapshot, site: site)
-        archiveTimeSlipOverlayManager.show(context: context)
+        writingEscapeOverlayManager.show(site: site)
     }
 
     private var appVersion: String {
