@@ -2,6 +2,7 @@
   <img src="Resources/AppIcon-Source.png" alt="WordPress Workspace app icon" width="160" height="160">
 </p>
 
+
 <h1 align="center">WordPress Workspace</h1>
 
 <p align="center">
