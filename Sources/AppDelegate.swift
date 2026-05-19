@@ -352,6 +352,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isImageDropOverlayTargeted = false
     private var statusItem: NSStatusItem?
     private var statusItemView: StatusItemDropView?
+    private let archiveTimeSlipOverlayManager = ArchiveTimeSlipOverlayManager()
     private var statusIconCancellable: AnyCancellable?
     private var agentPreviewCancellable: AnyCancellable?
     private var menuBarIconVisibilityObserver: NSObjectProtocol?
@@ -417,6 +418,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appUpdateCheckTimer?.invalidate()
         appUpdateCheckTimer = nil
         removeMenuBarDragMonitors()
+        archiveTimeSlipOverlayManager.dismiss(animated: false)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -872,6 +874,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(submenuItem(title: "Microphone", submenu: microphoneMenu()))
 
         menu.addItem(.separator())
+        menu.addItem(submenuItem(title: "Unhinged Lab", submenu: unhingedLabMenu()))
+
+        menu.addItem(.separator())
         menu.addItem(actionItem("Settings") {
             NotificationCenter.default.post(name: .showSettings, object: nil)
         })
@@ -882,6 +887,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         })
 
         return menu
+    }
+
+    private func unhingedLabMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let timeSlipItem = actionItem("Take Me Back to 2004", imageName: "clock.arrow.circlepath") { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self?.showArchiveTimeSlipOverlay()
+            }
+        }
+        timeSlipItem.isEnabled = !appState.isRecording && !appState.isTranscribing
+        menu.addItem(timeSlipItem)
+
+        addDisabledItem("Phrase trigger later: Workspace, take me back to 2004.", to: menu)
+        return menu
+    }
+
+    private func showArchiveTimeSlipOverlay() {
+        guard AXIsProcessTrusted() else {
+            appState.showAccessibilityAlert()
+            return
+        }
+
+        appState.refreshLatestExternalAppSnapshot()
+        let snapshot = appState.latestExternalAppSnapshot
+        let site = snapshot
+            .flatMap { appState.effectiveWordPressComSite(for: $0.bundleIdentifier) }
+            ?? appState.selectedWordPressComSite
+        let context = ArchiveTimeSlipContext(snapshot: snapshot, site: site)
+        archiveTimeSlipOverlayManager.show(context: context)
     }
 
     private var appVersion: String {
