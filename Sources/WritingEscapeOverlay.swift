@@ -24,7 +24,7 @@ final class WritingEscapeOverlayManager {
         !panels.isEmpty
     }
 
-    func show(site: WPCOMSite) {
+    func show(site: WPCOMSite, initialText: String = "") {
         dismiss()
 
         let screens = NSScreen.screens.isEmpty ? [NSScreen.main].compactMap { $0 } : NSScreen.screens
@@ -36,6 +36,7 @@ final class WritingEscapeOverlayManager {
                 let view = WritingEscapeGameView(
                     frame: NSRect(origin: .zero, size: screen.frame.size),
                     siteName: site.displayName,
+                    initialText: initialText,
                     onEscapeRequested: { [weak self] body, metrics in
                         self?.saveAndEscape(site: site, body: body, metrics: metrics)
                     },
@@ -197,6 +198,7 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
     }
 
     private let siteName: String?
+    private let initialText: String
     private let onEscapeRequested: (String, WritingEscapeMetrics) -> Void
     private let onEmergencyEscapeRequested: () -> Void
     private let startedAt = Date()
@@ -246,10 +248,12 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
     init(
         frame frameRect: NSRect,
         siteName: String?,
+        initialText: String,
         onEscapeRequested: @escaping (String, WritingEscapeMetrics) -> Void,
         onEmergencyEscapeRequested: @escaping () -> Void
     ) {
         self.siteName = siteName
+        self.initialText = initialText
         self.onEscapeRequested = onEscapeRequested
         self.onEmergencyEscapeRequested = onEmergencyEscapeRequested
         self.lastUpdateTime = startedAt.timeIntervalSinceReferenceDate
@@ -398,7 +402,8 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
         scrollView.documentView = textView
 
         textView.delegate = self
-        textView.string = ""
+        textView.string = initialText
+        lastTextLength = initialText.count
         textView.font = NSFont.systemFont(ofSize: 20, weight: .regular)
         textView.textColor = .escapePaperInk
         textView.insertionPointColor = .escapeGreen

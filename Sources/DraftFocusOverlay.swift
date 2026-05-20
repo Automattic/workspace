@@ -1,5 +1,38 @@
 import AppKit
 
+enum DraftExperienceTemplate: String, CaseIterable {
+    case draftFocus = "draft-focus"
+    case writeToEscape = "write-to-escape"
+
+    var displayName: String {
+        switch self {
+        case .draftFocus:
+            return "Draft Focus"
+        case .writeToEscape:
+            return "Write to Escape"
+        }
+    }
+
+    var menuImageName: String {
+        switch self {
+        case .draftFocus:
+            return "doc.text"
+        case .writeToEscape:
+            return "square.and.pencil"
+        }
+    }
+}
+
+private enum DraftFocusPaperLayout {
+    static let textInsetX: CGFloat = 72
+    static let textInsetY: CGFloat = 40
+    static let lineHeight: CGFloat = 32
+    static let lineBaselineOffset: CGFloat = 25
+    static let ruleStartX: CGFloat = 44
+    static let ruleEndInset: CGFloat = 44
+    static let marginX: CGFloat = 52
+}
+
 private enum DraftFocusTheme: String, CaseIterable {
     case typewriterStudy = "typewriter-study"
     case rainWindow = "rain-window"
@@ -194,6 +227,7 @@ final class DraftOverlayPanel: NSPanel {
 final class DraftFocusOverlayManager {
     var onError: ((String) -> Void)?
     var onSaved: ((WPCOMGuideline, URL, Int) -> Void)?
+    var onExperienceRequested: ((DraftExperienceTemplate, WPCOMSite, String) -> Void)?
 
     private var panels: [DraftOverlayPanel] = []
     private weak var focusView: DraftFocusView?
@@ -221,6 +255,12 @@ final class DraftFocusOverlayManager {
                     },
                     onCloseRequested: { [weak self] in
                         self?.dismiss()
+                    },
+                    onExperienceRequested: { [weak self] template in
+                        guard template != .draftFocus else { return }
+                        let body = self?.focusView?.body ?? ""
+                        self?.dismiss()
+                        self?.onExperienceRequested?(template, site, body)
                     }
                 )
                 panel.contentView = view
@@ -333,11 +373,13 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     private let siteName: String?
     private let onSaveRequested: (String) -> Void
     private let onCloseRequested: () -> Void
+    private let onExperienceRequested: (DraftExperienceTemplate) -> Void
     private let startedAt = Date()
 
     private let closeButton = DraftFocusButton(title: "Close", style: .secondary)
     private let saveButton = DraftFocusButton(title: "Save and Close", style: .primary)
-    private let themePicker = DraftFocusThemePickerButton(frame: .zero)
+    private let experiencePicker = DraftFocusPickerButton(prefix: "Experience", frame: .zero)
+    private let themePicker = DraftFocusPickerButton(prefix: "Scene", frame: .zero)
     private let titleLabel = NSTextField(labelWithString: "Draft Focus")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let wordCountLabel = NSTextField(labelWithString: "0 words")
@@ -346,7 +388,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     private let placeholderLabel = NSTextField(labelWithString: "Begin here.")
     private let editorChrome = DraftFocusEditorChrome(frame: .zero)
     private let scrollView = NSScrollView(frame: .zero)
-    private let textView = NSTextView(frame: .zero)
+    private let textView = DraftFocusTextView(frame: .zero)
 
     private var timer: Timer?
     private var isSaving = false
@@ -358,11 +400,13 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         frame frameRect: NSRect,
         siteName: String?,
         onSaveRequested: @escaping (String) -> Void,
-        onCloseRequested: @escaping () -> Void
+        onCloseRequested: @escaping () -> Void,
+        onExperienceRequested: @escaping (DraftExperienceTemplate) -> Void
     ) {
         self.siteName = siteName
         self.onSaveRequested = onSaveRequested
         self.onCloseRequested = onCloseRequested
+        self.onExperienceRequested = onExperienceRequested
         super.init(frame: frameRect)
         setupView()
         startTimer()
@@ -398,6 +442,10 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         window?.makeFirstResponder(textView)
     }
 
+    var body: String {
+        textView.string
+    }
+
     func setSaving(_ saving: Bool) {
         isSaving = saving
         saveButton.title = saving ? "Saving..." : "Save and Close"
@@ -429,6 +477,39 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     @objc private func closeButtonPressed() {
         guard !isSaving else { return }
         onCloseRequested()
+    }
+
+    @objc private func experiencePickerPressed() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        for template in DraftExperienceTemplate.allCases {
+            let item = NSMenuItem(
+                title: template.displayName,
+                action: #selector(experienceMenuItemSelected(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = template.rawValue
+            item.state = template == .draftFocus ? .on : .off
+            menu.addItem(item)
+        }
+
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: experiencePicker.bounds.height + 6),
+            in: experiencePicker
+        )
+    }
+
+    @objc private func experienceMenuItemSelected(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let template = DraftExperienceTemplate(rawValue: rawValue),
+              template != .draftFocus else {
+            return
+        }
+
+        onExperienceRequested(template)
     }
 
     @objc private func themePickerPressed() {
@@ -499,6 +580,11 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         addSubview(closeButton)
         addSubview(saveButton)
 
+        experiencePicker.target = self
+        experiencePicker.action = #selector(experiencePickerPressed)
+        experiencePicker.selectedTitle = DraftExperienceTemplate.draftFocus.displayName
+        addSubview(experiencePicker)
+
         themePicker.target = self
         themePicker.action = #selector(themePickerPressed)
         addSubview(themePicker)
@@ -521,14 +607,19 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         textView.allowsUndo = true
         textView.isAutomaticQuoteSubstitutionEnabled = true
         textView.isAutomaticDashSubstitutionEnabled = true
-        textView.textContainerInset = NSSize(width: 36, height: 36)
+        textView.textContainerInset = NSSize(
+            width: DraftFocusPaperLayout.textInsetX,
+            height: DraftFocusPaperLayout.textInsetY
+        )
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
+        textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 860, height: CGFloat.greatestFiniteMagnitude)
+        applyPaperParagraphStyle()
 
         applyTheme()
         updateMetadata()
@@ -543,13 +634,33 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         placeholderLabel.textColor = theme.paperInkColor.withAlphaComponent(0.28)
         textView.textColor = theme.paperInkColor
         textView.insertionPointColor = theme.accentColor
+        textView.focusTheme = theme
         editorChrome.theme = theme
         closeButton.theme = theme
         saveButton.theme = theme
+        experiencePicker.theme = theme
+        experiencePicker.selectedTitle = DraftExperienceTemplate.draftFocus.displayName
         themePicker.theme = theme
-        themePicker.selectedTheme = theme
+        themePicker.selectedTitle = theme.displayName
+        applyPaperParagraphStyle()
         needsDisplay = true
         needsLayout = true
+    }
+
+    private func applyPaperParagraphStyle() {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.minimumLineHeight = DraftFocusPaperLayout.lineHeight
+        paragraphStyle.maximumLineHeight = DraftFocusPaperLayout.lineHeight
+        paragraphStyle.lineSpacing = 0
+        paragraphStyle.paragraphSpacing = 0
+        paragraphStyle.paragraphSpacingBefore = 0
+        textView.defaultParagraphStyle = paragraphStyle
+        textView.typingAttributes = [
+            .font: textView.font ?? NSFont.monospacedSystemFont(ofSize: 19, weight: .regular),
+            .foregroundColor: theme.paperInkColor,
+            .paragraphStyle: paragraphStyle
+        ]
+        textView.needsDisplay = true
     }
 
     private func startTimer() {
@@ -582,6 +693,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         closeButton.frame = NSRect(x: left, y: top, width: 96, height: 38)
         saveButton.frame = NSRect(x: left + contentWidth - 168, y: top, width: 168, height: 38)
         themePicker.frame = NSRect(x: saveButton.frame.minX - 236, y: top, width: 220, height: 38)
+        experiencePicker.frame = NSRect(x: themePicker.frame.minX - 236, y: top, width: 220, height: 38)
 
         titleLabel.frame = NSRect(x: left, y: top + 64, width: contentWidth, height: 42)
         subtitleLabel.frame = NSRect(x: left + 2, y: top + 108, width: contentWidth - 4, height: 22)
@@ -592,7 +704,12 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         editorChrome.frame = NSRect(x: left, y: editorTop, width: contentWidth, height: editorHeight)
         scrollView.frame = editorChrome.bounds.insetBy(dx: 1, dy: 1)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: max(editorHeight, textView.frame.height))
-        placeholderLabel.frame = NSRect(x: 38, y: 34, width: editorChrome.bounds.width - 76, height: 28)
+        placeholderLabel.frame = NSRect(
+            x: DraftFocusPaperLayout.textInsetX,
+            y: DraftFocusPaperLayout.textInsetY - 4,
+            width: editorChrome.bounds.width - DraftFocusPaperLayout.textInsetX - 44,
+            height: 28
+        )
 
         let metaTop = editorTop + editorHeight + 14
         wordCountLabel.frame = NSRect(x: left, y: metaTop, width: 120, height: 18)
@@ -660,16 +777,47 @@ private final class DraftFocusEditorChrome: NSView {
         path.lineWidth = 1.5
         path.stroke()
 
-        theme.paperInkColor.withAlphaComponent(0.050).setFill()
-        for y in stride(from: CGFloat(78), through: bounds.height - 26, by: 34) {
-            NSRect(x: 44, y: y, width: bounds.width - 88, height: 1).fill()
-        }
-
-        theme.accentColor.withAlphaComponent(0.11).setFill()
-        NSRect(x: 72, y: 34, width: 1, height: max(0, bounds.height - 68)).fill()
-
         NSColor.white.withAlphaComponent(0.12).setFill()
         NSRect(x: pageRect.minX + 1, y: pageRect.minY + 1, width: pageRect.width - 2, height: 34).fill()
+    }
+}
+
+private final class DraftFocusTextView: NSTextView {
+    var focusTheme: DraftFocusTheme = .typewriterStudy {
+        didSet { needsDisplay = true }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        drawPaperLines(in: dirtyRect)
+        super.draw(dirtyRect)
+    }
+
+    private func drawPaperLines(in dirtyRect: NSRect) {
+        let lineColor = focusTheme.paperInkColor.withAlphaComponent(0.045)
+        lineColor.setFill()
+
+        let firstLineY = DraftFocusPaperLayout.textInsetY + DraftFocusPaperLayout.lineBaselineOffset
+        let startIndex = max(0, floor((dirtyRect.minY - firstLineY) / DraftFocusPaperLayout.lineHeight))
+        var y = firstLineY + startIndex * DraftFocusPaperLayout.lineHeight
+        while y <= dirtyRect.maxY + DraftFocusPaperLayout.lineHeight {
+            NSRect(
+                x: DraftFocusPaperLayout.ruleStartX,
+                y: y,
+                width: max(0, bounds.width - DraftFocusPaperLayout.ruleStartX - DraftFocusPaperLayout.ruleEndInset),
+                height: 1
+            ).fill()
+            y += DraftFocusPaperLayout.lineHeight
+        }
+
+        focusTheme.accentColor.withAlphaComponent(0.10).setFill()
+        NSRect(
+            x: DraftFocusPaperLayout.marginX,
+            y: dirtyRect.minY,
+            width: 1,
+            height: dirtyRect.height
+        ).fill()
     }
 }
 
@@ -769,15 +917,26 @@ private final class DraftFocusButton: NSControl {
     }
 }
 
-private final class DraftFocusThemePickerButton: NSControl {
-    var selectedTheme: DraftFocusTheme = .typewriterStudy {
+private final class DraftFocusPickerButton: NSControl {
+    var selectedTitle: String = "" {
         didSet { needsDisplay = true }
     }
     var theme: DraftFocusTheme = .typewriterStudy {
         didSet { needsDisplay = true }
     }
 
+    private let prefix: String
+
     override var isFlipped: Bool { true }
+
+    init(prefix: String, frame frameRect: NSRect) {
+        self.prefix = prefix
+        super.init(frame: frameRect)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 1, dy: 1)
@@ -797,7 +956,7 @@ private final class DraftFocusThemePickerButton: NSControl {
             yRadius: 6
         ).fill()
 
-        let title = "Scene: \(selectedTheme.displayName)  v"
+        let title = "\(prefix): \(selectedTitle)  v"
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .left
         paragraph.lineBreakMode = .byTruncatingTail
