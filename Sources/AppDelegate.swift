@@ -1394,7 +1394,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return false
         }
 
-        stickyNoteManager.createNewSticky(siteID: siteID, body: body)
+        stickyNoteManager.createNewSticky(siteID: siteID, body: body, generateTitleFromBody: true)
         dismissWordPressAgentUtilityOverlay(restoreActivationPolicy: false)
         return true
     }
@@ -1412,7 +1412,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        stickyNoteManager.createNewSticky(siteID: siteID, body: body)
+        stickyNoteManager.createNewSticky(siteID: siteID, body: body, generateTitleFromBody: true)
     }
 
     private func showSiteStickies() {
