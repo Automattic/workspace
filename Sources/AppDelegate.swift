@@ -352,6 +352,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var isImageDropOverlayTargeted = false
     private var statusItem: NSStatusItem?
     private var statusItemView: StatusItemDropView?
+    private lazy var draftFocusOverlayManager: DraftFocusOverlayManager = {
+        let manager = DraftFocusOverlayManager()
+        manager.onError = { [weak self] message in
+            self?.appState.errorMessage = message
+        }
+        manager.onSaved = { [weak self] guideline, editURL, siteID in
+            Task { @MainActor in
+                self?.handleSavedDraftArtifact(guideline, editURL: editURL, siteID: siteID)
+            }
+        }
+        manager.onWriteToEscapeRequested = { [weak self] site, body in
+            Task { @MainActor in
+                self?.showWritingEscapeOverlay(site: site, initialText: body)
+            }
+        }
+        return manager
+    }()
+    private lazy var writingEscapeOverlayManager: WritingEscapeOverlayManager = {
+        let manager = WritingEscapeOverlayManager()
+        manager.onError = { [weak self] message in
+            self?.appState.errorMessage = message
+        }
+        manager.onSaved = { [weak self] guideline, editURL, siteID in
+            Task { @MainActor in
+                self?.handleSavedDraftArtifact(guideline, editURL: editURL, siteID: siteID)
+            }
+        }
+        return manager
+    }()
     private var statusIconCancellable: AnyCancellable?
     private var agentPreviewCancellable: AnyCancellable?
     private var menuBarIconVisibilityObserver: NSObjectProtocol?
@@ -417,6 +446,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appUpdateCheckTimer?.invalidate()
         appUpdateCheckTimer = nil
         removeMenuBarDragMonitors()
+        draftFocusOverlayManager.dismiss()
+        writingEscapeOverlayManager.dismiss()
+    }
+
+    @MainActor
+    private func handleSavedDraftArtifact(_ guideline: WPCOMGuideline, editURL: URL, siteID: Int) {
+        appState.statusText = "Saved draft artifact #\(guideline.id)"
+        appState.debugStatusMessage = "Saved draft artifact #\(guideline.id)"
+        let conversationID = appState.startWordPressAgentConversation(siteID: siteID)
+        appState.openWordPressAgentPreview(
+            url: editURL,
+            title: "Draft Artifact #\(guideline.id)",
+            conversationID: conversationID
+        )
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -872,6 +915,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(submenuItem(title: "Microphone", submenu: microphoneMenu()))
 
         menu.addItem(.separator())
+        let draftFocusItem = actionItem("Draft Focus Mode", imageName: "doc.text") { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self?.showDraftFocusOverlay()
+            }
+        }
+        draftFocusItem.isEnabled = canShowDraftOverlay
+        menu.addItem(draftFocusItem)
+
+        menu.addItem(.separator())
         menu.addItem(actionItem("Settings") {
             NotificationCenter.default.post(name: .showSettings, object: nil)
         })
@@ -882,6 +934,37 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         })
 
         return menu
+    }
+
+    private var canShowDraftOverlay: Bool {
+        appState.isWordPressComSignedIn
+            && appState.selectedWordPressComSiteID != nil
+            && !appState.isRecording
+            && !appState.isTranscribing
+    }
+
+    private func showDraftFocusOverlay() {
+        guard appState.isWordPressComSignedIn,
+              let site = appState.selectedWordPressComSite else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        writingEscapeOverlayManager.dismiss()
+        draftFocusOverlayManager.show(site: site)
+    }
+
+    private func showWritingEscapeOverlay(site providedSite: WPCOMSite? = nil, initialText: String = "") {
+        guard appState.isWordPressComSignedIn,
+              let site = providedSite ?? appState.selectedWordPressComSite else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        draftFocusOverlayManager.dismiss()
+        writingEscapeOverlayManager.show(site: site, initialText: initialText)
     }
 
     private var appVersion: String {

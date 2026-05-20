@@ -325,6 +325,13 @@ struct WPCOMGuideline: Codable, Equatable {
     let link: String?
 }
 
+struct WPCOMGuidelineTerm: Decodable, Equatable {
+    let id: Int
+    let name: String
+    let slug: String
+    let parent: Int?
+}
+
 struct WPCOMTranscribeResponse: Codable, Equatable {
     let rawTranscript: String
     let text: String
@@ -862,6 +869,28 @@ final class WPCOMClient: NSObject {
 
     private struct SitesResponse: Decodable {
         let sites: [WPCOMSite]
+    }
+
+    private struct GuidelineArtifactPayload: Encodable {
+        let status: String
+        let title: String
+        let content: String
+        let excerpt: String
+        let wpGuidelineType: [Int]
+
+        private enum CodingKeys: String, CodingKey {
+            case status
+            case title
+            case content
+            case excerpt
+            case wpGuidelineType = "wp_guideline_type"
+        }
+    }
+
+    private struct GuidelineTypeTermPayload: Encodable {
+        let name: String
+        let slug: String
+        let parent: Int
     }
 
     private struct AtomicReadAccessCookiesResponse: Decodable {
@@ -1517,6 +1546,34 @@ final class WPCOMClient: NSObject {
         return guidelines.first
     }
 
+    func saveDraftArtifact(
+        siteID: Int,
+        title: String,
+        excerpt: String,
+        content: String
+    ) async throws -> WPCOMGuideline {
+        let artifactTerm = try await resolveGuidelineTypeTerm(
+            siteID: siteID,
+            slug: "artifact",
+            name: "Artifact",
+            parentID: nil
+        )
+        let url = URL(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines")!
+        let payload = GuidelineArtifactPayload(
+            status: "private",
+            title: title,
+            content: content,
+            excerpt: excerpt,
+            wpGuidelineType: [artifactTerm.id]
+        )
+        return try await authenticatedJSONRequest(
+            for: url,
+            method: "POST",
+            body: payload,
+            responseType: WPCOMGuideline.self
+        )
+    }
+
     func transcribe(
         audioFileURL: URL,
         siteID: Int,
@@ -1849,6 +1906,43 @@ final class WPCOMClient: NSObject {
         try await authenticatedData(for: url, timeoutInterval: nil)
     }
 
+    private func resolveGuidelineTypeTerm(
+        siteID: Int,
+        slug: String,
+        name: String,
+        parentID: Int?
+    ) async throws -> WPCOMGuidelineTerm {
+        if let existing = try await fetchGuidelineTypeTerm(siteID: siteID, slug: slug) {
+            return existing
+        }
+
+        let url = URL(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/wp_guideline_type")!
+        let payload = GuidelineTypeTermPayload(name: name, slug: slug, parent: parentID ?? 0)
+        do {
+            return try await authenticatedJSONRequest(
+                for: url,
+                method: "POST",
+                body: payload,
+                responseType: WPCOMGuidelineTerm.self
+            )
+        } catch {
+            if let existing = try? await fetchGuidelineTypeTerm(siteID: siteID, slug: slug) {
+                return existing
+            }
+            throw error
+        }
+    }
+
+    private func fetchGuidelineTypeTerm(siteID: Int, slug: String) async throws -> WPCOMGuidelineTerm? {
+        var components = URLComponents(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/wp_guideline_type")!
+        components.queryItems = [
+            URLQueryItem(name: "context", value: "edit"),
+            URLQueryItem(name: "slug", value: slug)
+        ]
+        let data = try await authenticatedData(for: components.url!)
+        return try JSONDecoder().decode([WPCOMGuidelineTerm].self, from: data).first
+    }
+
     private func authenticatedData(for url: URL, timeoutInterval: TimeInterval?) async throws -> Data {
         var request = URLRequest(url: url)
         if let timeoutInterval {
@@ -1858,6 +1952,25 @@ final class WPCOMClient: NSObject {
         let (data, response) = try await sessionProvider.data(for: request)
         try validate(response: response, data: data)
         return data
+    }
+
+    private func authenticatedJSONRequest<Body: Encodable, Response: Decodable>(
+        for url: URL,
+        method: String,
+        body: Body,
+        responseType: Response.Type
+    ) async throws -> Response {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.setValue(try await authorizationHeaderValue(), forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let (data, response) = try await sessionProvider.data(for: request)
+        try validate(response: response, data: data)
+        return try JSONDecoder().decode(responseType, from: data)
     }
 
     private func authorizationHeaderValue() async throws -> String {
