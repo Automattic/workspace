@@ -542,7 +542,6 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        Self.migrateLegacyDatabaseIfNeeded(to: url)
 
         var openedDatabase: OpaquePointer?
         let flags = SQLITE_OPEN_CREATE | SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
@@ -566,45 +565,10 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
             .appendingPathComponent("Workspace.sqlite")
     }
 
-    private static var legacyDatabaseURL: URL {
-        applicationSupportDirectory
-            .appendingPathComponent("QuickLauncher.sqlite")
-    }
-
     private static var applicationSupportDirectory: URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "WP Workspace"
         return appSupport.appendingPathComponent(appName, isDirectory: true)
-    }
-
-    private static func migrateLegacyDatabaseIfNeeded(to databaseURL: URL) {
-        let fileManager = FileManager.default
-        let legacyURL = legacyDatabaseURL
-        guard legacyURL.path != databaseURL.path,
-              !fileManager.fileExists(atPath: databaseURL.path),
-              fileManager.fileExists(atPath: legacyURL.path) else {
-            return
-        }
-
-        moveDatabaseItemIfNeeded(from: legacyURL, to: databaseURL)
-        moveDatabaseItemIfNeeded(
-            from: URL(fileURLWithPath: legacyURL.path + "-wal"),
-            to: URL(fileURLWithPath: databaseURL.path + "-wal")
-        )
-        moveDatabaseItemIfNeeded(
-            from: URL(fileURLWithPath: legacyURL.path + "-shm"),
-            to: URL(fileURLWithPath: databaseURL.path + "-shm")
-        )
-    }
-
-    private static func moveDatabaseItemIfNeeded(from sourceURL: URL, to destinationURL: URL) {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: sourceURL.path),
-              !fileManager.fileExists(atPath: destinationURL.path) else {
-            return
-        }
-
-        try? fileManager.moveItem(at: sourceURL, to: destinationURL)
     }
 
     private func createSchema() {

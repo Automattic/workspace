@@ -424,8 +424,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let selectedWPCOMSiteIDStorageKey = "selected_wpcom_site_id"
     private let wpcomAppSiteOverridesStorageKey = "wpcom_app_site_overrides"
     private let wordpressAgentStarredSiteIDsStorageKey = "wordpress_agent_starred_site_ids"
-    private let wordpressComSitesCacheStorageKey = "wordpress_com_sites_cache"
-    private let wordpressComUserCacheStorageKey = "wordpress_com_user_cache"
     private let wordpressAgentConversationsCacheStorageKey = "wordpress_agent_conversations_cache"
     private let lastNotifiedAppUpdateVersionStorageKey = "last_notified_app_update_version"
     private let networkRoutingSettingsStorageKey = "network_routing_settings"
@@ -900,12 +898,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let quickLauncherIndexStore = QuickLauncherIndexStore()
         let isInitiallyWordPressComSignedIn = wpcomClient.isSignedIn
         let cachedWordPressComSites = isInitiallyWordPressComSignedIn
-            ? quickLauncherIndexStore.cachedWordPressComSites()
-                ?? Self.loadCachedWordPressComSites(forKey: wordpressComSitesCacheStorageKey)
+            ? quickLauncherIndexStore.cachedWordPressComSites() ?? []
             : []
         let cachedWordPressComUser = isInitiallyWordPressComSignedIn
             ? quickLauncherIndexStore.cachedWordPressComUser()
-                ?? Self.loadCachedWordPressComUser(forKey: wordpressComUserCacheStorageKey)
             : nil
         let cachedWordPressAgentConversations = isInitiallyWordPressComSignedIn
             ? Self.loadCachedWordPressAgentConversations(forKey: wordpressAgentConversationsCacheStorageKey)
@@ -958,8 +954,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         if isInitiallyWordPressComSignedIn {
             quickLauncherIndexStore.replaceCachedWordPressComSites(cachedWordPressComSites)
             quickLauncherIndexStore.replaceCachedWordPressComUser(cachedWordPressComUser)
-            UserDefaults.standard.removeObject(forKey: wordpressComSitesCacheStorageKey)
-            UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
         }
         AppNetworkSessionProvider.shared.update(settings: networkRoutingSettings)
         if quickLauncherEnabled {
@@ -1275,33 +1269,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         UserDefaults.standard.set(data, forKey: networkRoutingSettingsStorageKey)
     }
 
-    private static func loadCachedWordPressComSites(forKey key: String) -> [WPCOMSite] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([WPCOMSite].self, from: data) else {
-            return []
-        }
-
-        var seenSiteIDs = Set<Int>()
-        return decoded.filter { site in
-            site.id > 0 && seenSiteIDs.insert(site.id).inserted
-        }
-    }
-
     private func persistCachedWordPressComSites() {
         quickLauncherIndexStore.replaceCachedWordPressComSites(wordpressComSites)
-        UserDefaults.standard.removeObject(forKey: wordpressComSitesCacheStorageKey)
-    }
-
-    private static func loadCachedWordPressComUser(forKey key: String) -> WPCOMUser? {
-        guard let data = UserDefaults.standard.data(forKey: key) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(WPCOMUser.self, from: data)
     }
 
     private func persistCachedWordPressComUser() {
         quickLauncherIndexStore.replaceCachedWordPressComUser(wordpressComUser)
-        UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
     }
 
     private static func loadCachedWordPressAgentConversations(forKey key: String) -> [WordPressAgentConversation] {
@@ -1474,8 +1447,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         hasLoadedWordPressAgentConversations = false
         wordpressAgentHistoryStatusMessage = nil
         transcribeSkill = nil
-        UserDefaults.standard.removeObject(forKey: wordpressComSitesCacheStorageKey)
-        UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
         UserDefaults.standard.removeObject(forKey: wordpressAgentConversationsCacheStorageKey)
         wordpressComStatusMessage = "Signed out"
     }
