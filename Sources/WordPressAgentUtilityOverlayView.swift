@@ -6,6 +6,7 @@ struct WordPressAgentUtilityOverlayView: View {
     @EnvironmentObject var appState: AppState
 
     let onSubmit: (String) -> Void
+    let onSaveSticky: (String, Int) -> Bool
     let onDismiss: () -> Void
 
     @State private var draftMessage = ""
@@ -87,6 +88,19 @@ struct WordPressAgentUtilityOverlayView: View {
                 }
 
                 Button {
+                    saveDraftAsSticky()
+                } label: {
+                    Image(systemName: "note.text.badge.plus")
+                        .font(.system(size: 16, weight: .medium))
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(canSaveSticky ? .secondary : .tertiary)
+                .help("Save as sticky note")
+                .disabled(!canSaveSticky)
+
+                Button {
                     appState.toggleRecordingForWordPressAgentUtilityOverlay()
                 } label: {
                     Image(systemName: appState.isRecording ? "stop.circle.fill" : "mic")
@@ -146,6 +160,12 @@ struct WordPressAgentUtilityOverlayView: View {
         && !isComposerDisabled
     }
 
+    private var canSaveSticky: Bool {
+        Self.containsNonWhitespace(draftMessage)
+        && activeSiteID != nil
+        && !isComposerDisabled
+    }
+
     private var isComposerDisabled: Bool {
         activeSiteID == nil
             || selectedConversation?.isSending == true
@@ -165,6 +185,7 @@ struct WordPressAgentUtilityOverlayView: View {
                 minimumHeight: 22,
                 maximumHeight: 160,
                 isDisabled: isComposerDisabled,
+                onShiftSubmit: saveDraftAsSticky,
                 onSubmit: sendDraftMessage
             )
             .frame(height: composerTextHeight)
@@ -197,6 +218,14 @@ struct WordPressAgentUtilityOverlayView: View {
         }
 
         onSubmit(conversationID)
+    }
+
+    private func saveDraftAsSticky() {
+        guard canSaveSticky, let activeSiteID else { return }
+        let message = draftMessage
+        guard onSaveSticky(message, activeSiteID) else { return }
+        draftMessage = ""
+        pendingImageURLs = []
     }
 
     private static func containsNonWhitespace(_ text: String) -> Bool {

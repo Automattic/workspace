@@ -86,6 +86,7 @@ private final class StatusItemDropView: NSView {
     var onPrimaryClick: (() -> Void)?
     var onSecondaryClick: (() -> Void)?
     var onOpenFileURLs: (([URL]) -> Void)?
+    var onOpenText: ((String) -> Void)?
     var onImageDragEntered: (() -> Void)?
     var onImageDragEnded: (() -> Void)?
 
@@ -147,7 +148,7 @@ private final class StatusItemDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard !ImageDropPasteboardReader.supportedImageFileURLs(from: sender.draggingPasteboard).isEmpty else {
+        guard ImageDropPasteboardReader.supportsDrop(from: sender.draggingPasteboard) else {
             return []
         }
         isDropTargeted = true
@@ -156,7 +157,7 @@ private final class StatusItemDropView: NSView {
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        ImageDropPasteboardReader.supportedImageFileURLs(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+        ImageDropPasteboardReader.supportsDrop(from: sender.draggingPasteboard) ? .copy : []
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -170,15 +171,24 @@ private final class StatusItemDropView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = ImageDropPasteboardReader.supportedImageFileURLs(from: sender.draggingPasteboard)
-        guard !urls.isEmpty else { return false }
+        if !urls.isEmpty {
+            isDropTargeted = false
+            onOpenFileURLs?(urls)
+            return true
+        }
+
+        guard let text = ImageDropPasteboardReader.supportedText(from: sender.draggingPasteboard) else {
+            return false
+        }
         isDropTargeted = false
-        onOpenFileURLs?(urls)
+        onOpenText?(text)
         return true
     }
 }
 
 private final class ImageDropOverlayView: NSView {
     var onOpenFileURLs: (([URL]) -> Void)?
+    var onOpenText: ((String) -> Void)?
     var onTargetedChange: ((Bool) -> Void)?
     var onDragEnded: (() -> Void)?
 
@@ -245,15 +255,18 @@ private final class ImageDropOverlayView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard !ImageDropPasteboardReader.supportedImageFileURLs(from: sender.draggingPasteboard).isEmpty else {
+        guard ImageDropPasteboardReader.supportsDrop(from: sender.draggingPasteboard) else {
             return []
         }
+        updateCopy(for: sender.draggingPasteboard)
         isDropTargeted = true
         return .copy
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        ImageDropPasteboardReader.supportedImageFileURLs(from: sender.draggingPasteboard).isEmpty ? [] : .copy
+        guard ImageDropPasteboardReader.supportsDrop(from: sender.draggingPasteboard) else { return [] }
+        updateCopy(for: sender.draggingPasteboard)
+        return .copy
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -267,19 +280,46 @@ private final class ImageDropOverlayView: NSView {
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = ImageDropPasteboardReader.supportedImageFileURLs(from: sender.draggingPasteboard)
-        guard !urls.isEmpty else { return false }
+        if !urls.isEmpty {
+            isDropTargeted = false
+            onOpenFileURLs?(urls)
+            return true
+        }
+
+        guard let text = ImageDropPasteboardReader.supportedText(from: sender.draggingPasteboard) else {
+            return false
+        }
         isDropTargeted = false
-        onOpenFileURLs?(urls)
+        onOpenText?(text)
         return true
+    }
+
+    private func updateCopy(for pasteboard: NSPasteboard) {
+        if ImageDropPasteboardReader.supportedText(from: pasteboard) != nil,
+           ImageDropPasteboardReader.supportedImageFileURLs(from: pasteboard).isEmpty {
+            titleLabel.stringValue = "Drop text to make sticky"
+            subtitleLabel.stringValue = "WP Workspace will save it on this site"
+        } else {
+            titleLabel.stringValue = "Drop images to upload"
+            subtitleLabel.stringValue = "WP Workspace will ask before uploading"
+        }
     }
 }
 
 private enum ImageDropPasteboardReader {
+    private static let plainTextType = NSPasteboard.PasteboardType("public.utf8-plain-text")
+
     static let readableTypes: [NSPasteboard.PasteboardType] = [
         .fileURL,
         .URL,
-        NSPasteboard.PasteboardType("NSFilenamesPboardType")
+        NSPasteboard.PasteboardType("NSFilenamesPboardType"),
+        .string,
+        plainTextType
     ]
+
+    static func supportsDrop(from pasteboard: NSPasteboard) -> Bool {
+        !supportedImageFileURLs(from: pasteboard).isEmpty || supportedText(from: pasteboard) != nil
+    }
 
     static func supportedImageFileURLs(from pasteboard: NSPasteboard) -> [URL] {
         let objects = pasteboard.readObjects(
@@ -316,6 +356,23 @@ private enum ImageDropPasteboardReader {
 
         return ImageImportProcessor.supportedImageFileURLs(from: uniqueURLs)
     }
+
+    static func supportedText(from pasteboard: NSPasteboard) -> String? {
+        let hasFilePayload = pasteboard.types?.contains(.fileURL) == true
+            || pasteboard.types?.contains(NSPasteboard.PasteboardType("NSFilenamesPboardType")) == true
+        guard !hasFilePayload else {
+            return nil
+        }
+
+        let candidates = [
+            pasteboard.string(forType: .string),
+            pasteboard.string(forType: plainTextType)
+        ]
+
+        return candidates
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
 }
 
 private extension NSRect {
@@ -340,6 +397,7 @@ private extension NSView {
     }
 }
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     let appState = AppState()
     var setupWindow: NSWindow?
@@ -350,6 +408,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var imageDropOverlayWindow: NSWindow?
     private var imageDropOverlayCloseWorkItem: DispatchWorkItem?
     private var isImageDropOverlayTargeted = false
+    private lazy var stickyNoteManager: StickyNoteWindowManager = {
+        let manager = StickyNoteWindowManager()
+        manager.onError = { [weak self] message in
+            self?.appState.errorMessage = message
+        }
+        manager.onVisibleWindowsChanged = { [weak self] hasVisibleWindows in
+            if hasVisibleWindows {
+                NSApp.setActivationPolicy(.regular)
+            } else {
+                self?.restoreAccessoryActivationIfIdle()
+            }
+        }
+        manager.onOpenArtifactRequested = { [weak self] siteID, guidelineID, title in
+            Task { @MainActor in
+                self?.openStickyArtifact(siteID: siteID, guidelineID: guidelineID, title: title)
+            }
+        }
+        return manager
+    }()
     private var statusItem: NSStatusItem?
     private var statusItemView: StatusItemDropView?
     private lazy var draftFocusOverlayManager: DraftFocusOverlayManager = {
@@ -383,6 +460,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     private var statusIconCancellable: AnyCancellable?
     private var agentPreviewCancellable: AnyCancellable?
+    private var stickySiteCancellable: AnyCancellable?
     private var menuBarIconVisibilityObserver: NSObjectProtocol?
     private var localMenuBarDragMonitor: Any?
     private var globalMenuBarDragMonitor: Any?
@@ -392,6 +470,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().delegate = self
         configureStatusItem()
         installStatusItemObservers()
+        installStickyNoteSiteObserver()
         installAgentPreviewObserver()
         installMenuBarDragMonitors()
         startAppUpdateChecks()
@@ -440,6 +519,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        stickyNoteManager.prepareForAppTermination()
         if let menuBarIconVisibilityObserver {
             NotificationCenter.default.removeObserver(menuBarIconVisibilityObserver)
         }
@@ -458,6 +538,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.openWordPressAgentPreview(
             url: editURL,
             title: "Draft Artifact #\(guideline.id)",
+            conversationID: conversationID
+        )
+    }
+
+    @MainActor
+    private func openStickyArtifact(siteID: Int, guidelineID: Int, title: String) {
+        guard let site = appState.wordpressComSites.first(where: { $0.id == siteID }) else {
+            appState.errorMessage = "Could not open sticky artifact: site \(siteID) is not available."
+            return
+        }
+
+        let guideline = WPCOMGuideline(id: guidelineID, slug: "", modified: nil, link: nil)
+        let editURL = WPCOMClient().editURL(for: guideline, site: site)
+        let conversationID = appState.startWordPressAgentConversation(siteID: siteID)
+        appState.openWordPressAgentPreview(
+            url: editURL,
+            title: title,
             conversationID: conversationID
         )
     }
@@ -537,6 +634,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.closeImageDropOverlay()
                 self?.handleOpenedImageURLs(urls)
             }
+            statusView.onOpenText = { [weak self] text in
+                self?.closeImageDropOverlay()
+                self?.handleDroppedTextAsSticky(text)
+            }
             statusView.onImageDragEntered = { [weak self] in
                 self?.showImageDropOverlay()
             }
@@ -573,7 +674,30 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.configureStatusItem()
+            Task { @MainActor in
+                self?.configureStatusItem()
+            }
+        }
+    }
+
+    private func installStickyNoteSiteObserver() {
+        stickySiteCancellable = Publishers.CombineLatest(
+            appState.$isWordPressComSignedIn,
+            appState.$selectedWordPressComSiteID
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] isSignedIn, siteID in
+            guard let self else { return }
+            self.stickyNoteManager.resetClient()
+            guard isSignedIn else {
+                self.stickyNoteManager.clearForSignedOutUser()
+                return
+            }
+            guard let siteID else {
+                self.stickyNoteManager.switchToNoSite()
+                return
+            }
+            self.stickyNoteManager.switchToSite(siteID: siteID)
         }
     }
 
@@ -613,7 +737,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         switch event.type {
         case .leftMouseDragged:
             guard isMouseNearStatusItemForDrop(),
-                  !ImageDropPasteboardReader.supportedImageFileURLs(from: NSPasteboard(name: .drag)).isEmpty else {
+                  ImageDropPasteboardReader.supportsDrop(from: NSPasteboard(name: .drag)) else {
                 scheduleImageDropOverlayClose(after: 0.45)
                 return
             }
@@ -654,6 +778,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         overlayView.onOpenFileURLs = { [weak self] urls in
             self?.closeImageDropOverlay()
             self?.handleOpenedImageURLs(urls)
+        }
+        overlayView.onOpenText = { [weak self] text in
+            self?.closeImageDropOverlay()
+            self?.handleDroppedTextAsSticky(text)
         }
         overlayView.onTargetedChange = { [weak self] isTargeted in
             self?.isImageDropOverlayTargeted = isTargeted
@@ -847,6 +975,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             && !appState.isTranscribing
         menu.addItem(openOverlayItem)
 
+        menu.addItem(submenuItem(title: "Stickies", submenu: stickiesMenu()))
+
         let screenshotItem = actionItem("Capture Screenshot...", imageName: "camera.viewfinder") { [weak self] in
             self?.captureScreenshotForUpload()
         }
@@ -1029,6 +1159,47 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
+    private func stickiesMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let canUseStickies = appState.isWordPressComSignedIn
+            && appState.selectedWordPressComSiteID != nil
+        let siteID = appState.selectedWordPressComSiteID
+        let hasVisibleStickies = siteID.map { stickyNoteManager.hasVisibleStickies(siteID: $0) } ?? false
+
+        if let siteName = appState.selectedWordPressComSite?.displayName {
+            addDisabledItem(siteName, to: menu)
+            menu.addItem(.separator())
+        }
+
+        let newStickyItem = actionItem("Add New Sticky", imageName: "note.text") { [weak self] in
+            self?.showNewStickyNote()
+        }
+        newStickyItem.isEnabled = canUseStickies
+        menu.addItem(newStickyItem)
+
+        let showStickiesItem = actionItem("Show Stickies", imageName: "rectangle.stack") { [weak self] in
+            self?.toggleSiteStickies()
+        }
+        showStickiesItem.isEnabled = canUseStickies
+        showStickiesItem.state = hasVisibleStickies ? .on : .off
+        menu.addItem(showStickiesItem)
+
+        let hideStickiesItem = actionItem("Hide Stickies", imageName: "eye.slash") { [weak self] in
+            self?.hideSiteStickies()
+        }
+        hideStickiesItem.isEnabled = canUseStickies && hasVisibleStickies
+        menu.addItem(hideStickiesItem)
+
+        if !canUseStickies {
+            menu.addItem(.separator())
+            addDisabledItem("Select a WordPress.com site to use stickies.", to: menu)
+        }
+
+        return menu
+    }
+
     private func shortcutMenu(for role: ShortcutRole) -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -1140,6 +1311,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return String(trimmed.prefix(maxLength)) + "..."
     }
 
+    private func restoreAccessoryActivationIfIdle() {
+        if setupWindow == nil
+            && settingsWindow == nil
+            && agentWindow == nil
+            && agentUtilityOverlayWindow == nil
+            && imageImportWindow == nil
+            && !stickyNoteManager.hasVisibleWindows {
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+
     private func showSettingsWindow() {
         NSApp.setActivationPolicy(.regular)
 
@@ -1182,14 +1364,88 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.settingsWindow = nil
-            if self?.setupWindow == nil
-                && self?.agentWindow == nil
-                && self?.agentUtilityOverlayWindow == nil
-                && self?.imageImportWindow == nil {
-                NSApp.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                self?.settingsWindow = nil
+                self?.restoreAccessoryActivationIfIdle()
             }
         }
+    }
+
+    private func showNewStickyNote() {
+        guard appState.isWordPressComSignedIn,
+              let siteID = appState.selectedWordPressComSiteID else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        stickyNoteManager.createNewSticky(siteID: siteID)
+    }
+
+    private func saveQuickOverlayDraftAsSticky(body: String, siteID: Int) -> Bool {
+        guard appState.isWordPressComSignedIn,
+              appState.wordpressComSites.contains(where: { $0.id == siteID }) else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return false
+        }
+
+        guard body.contains(where: { !$0.isWhitespace && !$0.isNewline }) else {
+            return false
+        }
+
+        stickyNoteManager.createNewSticky(siteID: siteID, body: body)
+        dismissWordPressAgentUtilityOverlay(restoreActivationPolicy: false)
+        return true
+    }
+
+    private func handleDroppedTextAsSticky(_ text: String) {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty else { return }
+
+        guard appState.isWordPressComSignedIn,
+              let siteID = appState.selectedWordPressComSiteID,
+              appState.wordpressComSites.contains(where: { $0.id == siteID }) else {
+            appState.errorMessage = "Choose a WordPress.com site before saving a sticky note."
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        stickyNoteManager.createNewSticky(siteID: siteID, body: body)
+    }
+
+    private func showSiteStickies() {
+        guard appState.isWordPressComSignedIn,
+              let siteID = appState.selectedWordPressComSiteID else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        stickyNoteManager.showSiteStickies(siteID: siteID)
+    }
+
+    private func hideSiteStickies() {
+        guard appState.isWordPressComSignedIn,
+              let siteID = appState.selectedWordPressComSiteID else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        stickyNoteManager.hideSiteStickies(siteID: siteID)
+    }
+
+    private func toggleSiteStickies() {
+        guard appState.isWordPressComSignedIn,
+              let siteID = appState.selectedWordPressComSiteID else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        stickyNoteManager.toggleSiteStickies(siteID: siteID)
     }
 
     private func showWordPressAgentUtilityOverlay() {
@@ -1224,6 +1480,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             onSubmit: { [weak self] conversationID in
                 self?.dismissWordPressAgentUtilityOverlay(restoreActivationPolicy: false)
                 self?.showWordPressAgentWindow(conversationID: conversationID)
+            },
+            onSaveSticky: { [weak self] body, siteID in
+                self?.saveQuickOverlayDraftAsSticky(body: body, siteID: siteID) ?? false
             },
             onDismiss: { [weak self] in
                 self?.dismissWordPressAgentUtilityOverlay()
@@ -1265,27 +1524,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.appState.setWordPressAgentUtilityOverlayFocused(true)
+            Task { @MainActor in
+                self?.appState.setWordPressAgentUtilityOverlayFocused(true)
+            }
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.appState.setWordPressAgentUtilityOverlayFocused(false)
+            Task { @MainActor in
+                self?.appState.setWordPressAgentUtilityOverlayFocused(false)
+            }
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.appState.setWordPressAgentUtilityOverlayFocused(false)
-            self?.agentUtilityOverlayWindow = nil
-            if self?.setupWindow == nil
-                && self?.settingsWindow == nil
-                && self?.agentWindow == nil
-                && self?.imageImportWindow == nil {
-                NSApp.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                self?.appState.setWordPressAgentUtilityOverlayFocused(false)
+                self?.agentUtilityOverlayWindow = nil
+                self?.restoreAccessoryActivationIfIdle()
             }
         }
 
@@ -1298,8 +1558,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.setWordPressAgentUtilityOverlayFocused(false)
         agentUtilityOverlayWindow?.close()
         agentUtilityOverlayWindow = nil
-        if restoreActivationPolicy && setupWindow == nil && settingsWindow == nil && agentWindow == nil && imageImportWindow == nil {
-            NSApp.setActivationPolicy(.accessory)
+        if restoreActivationPolicy {
+            restoreAccessoryActivationIfIdle()
         }
     }
 
@@ -1405,27 +1665,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.appState.setWordPressAgentWindowFocused(true)
+            Task { @MainActor in
+                self?.appState.setWordPressAgentWindowFocused(true)
+            }
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.appState.setWordPressAgentWindowFocused(false)
+            Task { @MainActor in
+                self?.appState.setWordPressAgentWindowFocused(false)
+            }
         }
         NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.appState.setWordPressAgentWindowFocused(false)
-            self?.agentWindow = nil
-            if self?.setupWindow == nil
-                && self?.settingsWindow == nil
-                && self?.agentUtilityOverlayWindow == nil
-                && self?.imageImportWindow == nil {
-                NSApp.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                self?.appState.setWordPressAgentWindowFocused(false)
+                self?.agentWindow = nil
+                self?.restoreAccessoryActivationIfIdle()
             }
         }
 
@@ -1597,12 +1858,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.imageImportWindow = nil
-            if self?.setupWindow == nil
-                && self?.settingsWindow == nil
-                && self?.agentWindow == nil
-                && self?.agentUtilityOverlayWindow == nil {
-                NSApp.setActivationPolicy(.accessory)
+            Task { @MainActor in
+                self?.imageImportWindow = nil
+                self?.restoreAccessoryActivationIfIdle()
             }
         }
     }
@@ -1688,7 +1946,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppDelegate: UNUserNotificationCenterDelegate {
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
@@ -1698,7 +1956,7 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             let releaseURL = (userInfo["releaseURL"] as? String)
                 .flatMap(URL.init(string:))
                 ?? GitHubReleaseUpdateChecker.releasesPageURL
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 NSWorkspace.shared.open(releaseURL)
                 completionHandler()
             }
@@ -1706,13 +1964,13 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         }
 
         let conversationID = userInfo["conversationID"] as? String
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor [weak self] in
             self?.showWordPressAgentWindow(conversationID: conversationID)
             completionHandler()
         }
     }
 
-    func userNotificationCenter(
+    nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void

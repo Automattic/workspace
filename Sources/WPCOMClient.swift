@@ -332,6 +332,56 @@ struct WPCOMGuidelineTerm: Decodable, Equatable {
     let parent: Int?
 }
 
+struct WPCOMRESTTextField: Decodable, Equatable {
+    let raw: String?
+    let rendered: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case raw
+        case rendered
+    }
+
+    var bestText: String {
+        raw ?? rendered ?? ""
+    }
+
+    init(from decoder: Decoder) throws {
+        if let value = try? decoder.singleValueContainer().decode(String.self) {
+            raw = value
+            rendered = value
+            return
+        }
+
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        raw = try? container.decode(String.self, forKey: .raw)
+        rendered = try? container.decode(String.self, forKey: .rendered)
+    }
+}
+
+struct WPCOMStickyGuideline: Decodable, Equatable {
+    let id: Int
+    let slug: String
+    let status: String?
+    let title: WPCOMRESTTextField
+    let content: WPCOMRESTTextField
+    let excerpt: WPCOMRESTTextField
+    let modified: String?
+    let link: String?
+    let wpGuidelineType: [Int]
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case slug
+        case status
+        case title
+        case content
+        case excerpt
+        case modified
+        case link
+        case wpGuidelineType = "wp_guideline_type"
+    }
+}
+
 struct WPCOMTranscribeResponse: Codable, Equatable {
     let rawTranscript: String
     let text: String
@@ -1571,6 +1621,77 @@ final class WPCOMClient: NSObject {
             method: "POST",
             body: payload,
             responseType: WPCOMGuideline.self
+        )
+    }
+
+    func resolveStickyNoteTermIDs(siteID: Int) async throws -> [Int] {
+        let artifact = try await resolveGuidelineTypeTerm(
+            siteID: siteID,
+            slug: "artifact",
+            name: "Artifact",
+            parentID: nil
+        )
+        let note = try await resolveGuidelineTypeTerm(
+            siteID: siteID,
+            slug: "note",
+            name: "Note",
+            parentID: artifact.id
+        )
+        let sticky = try await resolveGuidelineTypeTerm(
+            siteID: siteID,
+            slug: "sticky",
+            name: "Sticky",
+            parentID: artifact.id
+        )
+        return [artifact.id, note.id, sticky.id]
+    }
+
+    func fetchStickyNoteGuidelines(siteID: Int, stickyTermID: Int) async throws -> [WPCOMStickyGuideline] {
+        var components = URLComponents(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines")!
+        components.queryItems = [
+            URLQueryItem(name: "context", value: "edit"),
+            URLQueryItem(name: "status", value: "private"),
+            URLQueryItem(name: "per_page", value: "100"),
+            URLQueryItem(name: "orderby", value: "modified"),
+            URLQueryItem(name: "order", value: "desc"),
+            URLQueryItem(name: "wp_guideline_type", value: "\(stickyTermID)")
+        ]
+        let data = try await authenticatedData(for: components.url!)
+        let guidelines = try JSONDecoder().decode([WPCOMStickyGuideline].self, from: data)
+        return guidelines.filter { $0.wpGuidelineType.contains(stickyTermID) }
+    }
+
+    func fetchStickyNoteGuideline(siteID: Int, guidelineID: Int) async throws -> WPCOMStickyGuideline {
+        let url = URL(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines/\(guidelineID)?context=edit")!
+        let data = try await authenticatedData(for: url)
+        return try JSONDecoder().decode(WPCOMStickyGuideline.self, from: data)
+    }
+
+    func saveStickyNoteGuideline(
+        siteID: Int,
+        guidelineID: Int?,
+        title: String,
+        excerpt: String,
+        content: String,
+        termIDs: [Int]
+    ) async throws -> WPCOMStickyGuideline {
+        var urlString = "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines"
+        if let guidelineID {
+            urlString += "/\(guidelineID)"
+        }
+        let url = URL(string: urlString)!
+        let payload = GuidelineArtifactPayload(
+            status: "private",
+            title: title,
+            content: content,
+            excerpt: excerpt,
+            wpGuidelineType: termIDs
+        )
+        return try await authenticatedJSONRequest(
+            for: url,
+            method: "POST",
+            body: payload,
+            responseType: WPCOMStickyGuideline.self
         )
     }
 

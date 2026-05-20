@@ -778,6 +778,7 @@ struct WordPressAgentWindowView: View {
                 minimumHeight: 24,
                 maximumHeight: 220,
                 isDisabled: isComposerInputDisabled,
+                onShiftSubmit: nil,
                 onSubmit: sendDraftMessage
             )
             .frame(height: composerTextHeight)
