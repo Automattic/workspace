@@ -1,10 +1,11 @@
 import AppKit
 
 private enum DraftFocusPaperLayout {
-    static let textInsetX: CGFloat = 72
+    static let textInsetX: CGFloat = 54
     static let textInsetY: CGFloat = 40
+    static let textTopAdjustment: CGFloat = -4
     static let lineHeight: CGFloat = 32
-    static let ruleOffsetBelowBaseline: CGFloat = 1
+    static let ruleOffsetBelowBaseline: CGFloat = 14
     static let marginGap: CGFloat = 20
 }
 
@@ -358,7 +359,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     private let wordCountLabel = NSTextField(labelWithString: "0 words")
     private let elapsedLabel = NSTextField(labelWithString: "0:00")
     private let saveErrorLabel = NSTextField(labelWithString: "")
-    private let placeholderLabel = NSTextField(labelWithString: "Begin here.")
     private let editorChrome = DraftFocusEditorChrome(frame: .zero)
     private let scrollView = NSScrollView(frame: .zero)
     private let textView = DraftFocusTextView(frame: .zero)
@@ -506,7 +506,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         wantsLayer = true
         layer?.isOpaque = false
 
-        for label in [titleLabel, subtitleLabel, wordCountLabel, elapsedLabel, saveErrorLabel, placeholderLabel] {
+        for label in [titleLabel, subtitleLabel, wordCountLabel, elapsedLabel, saveErrorLabel] {
             label.isEditable = false
             label.isBordered = false
             label.drawsBackground = false
@@ -528,8 +528,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         saveErrorLabel.font = .systemFont(ofSize: 12, weight: .medium)
         saveErrorLabel.lineBreakMode = .byTruncatingTail
 
-        placeholderLabel.font = .monospacedSystemFont(ofSize: 20, weight: .regular)
-
         closeButton.target = self
         closeButton.action = #selector(closeButtonPressed)
         saveButton.target = self
@@ -543,7 +541,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         addSubview(themePicker)
 
         editorChrome.addSubview(scrollView)
-        editorChrome.addSubview(placeholderLabel)
         addSubview(editorChrome)
 
         scrollView.drawsBackground = false
@@ -553,6 +550,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
 
         textView.delegate = self
         textView.string = ""
+        textView.placeholder = "Begin here."
         textView.font = NSFont.monospacedSystemFont(ofSize: 19, weight: .regular)
         textView.backgroundColor = .clear
         textView.drawsBackground = false
@@ -562,7 +560,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         textView.isAutomaticDashSubstitutionEnabled = true
         textView.textContainerInset = NSSize(
             width: DraftFocusPaperLayout.textInsetX,
-            height: DraftFocusPaperLayout.textInsetY
+            height: DraftFocusPaperLayout.textInsetY + DraftFocusPaperLayout.textTopAdjustment
         )
         textView.minSize = NSSize(width: 0, height: 0)
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
@@ -584,8 +582,8 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         wordCountLabel.textColor = theme.mutedInkColor
         elapsedLabel.textColor = theme.mutedInkColor
         saveErrorLabel.textColor = theme.errorColor
-        placeholderLabel.textColor = theme.paperInkColor.withAlphaComponent(0.28)
         textView.textColor = theme.paperInkColor
+        textView.placeholderColor = theme.paperInkColor.withAlphaComponent(0.28)
         textView.insertionPointColor = theme.accentColor
         textView.focusTheme = theme
         editorChrome.theme = theme
@@ -651,7 +649,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         wordCountLabel.stringValue = "\(wordCount) \(wordCount == 1 ? "word" : "words")"
         let elapsed = Int(Date().timeIntervalSince(startedAt))
         elapsedLabel.stringValue = String(format: "%d:%02d", elapsed / 60, elapsed % 60)
-        placeholderLabel.isHidden = !body.isEmpty
         saveButton.isEnabled = !isSaving && !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
@@ -676,12 +673,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         editorChrome.frame = NSRect(x: left, y: editorTop, width: contentWidth, height: editorHeight)
         scrollView.frame = editorChrome.bounds.insetBy(dx: 1, dy: 1)
         textView.frame = NSRect(x: 0, y: 0, width: scrollView.contentSize.width, height: max(editorHeight, textView.frame.height))
-        placeholderLabel.frame = NSRect(
-            x: DraftFocusPaperLayout.textInsetX,
-            y: DraftFocusPaperLayout.textInsetY - 4,
-            width: editorChrome.bounds.width - DraftFocusPaperLayout.textInsetX - 44,
-            height: 28
-        )
 
         let metaTop = editorTop + editorHeight + 14
         wordCountLabel.frame = NSRect(x: left, y: metaTop, width: 120, height: 18)
@@ -758,11 +749,18 @@ private final class DraftFocusTextView: NSTextView {
     var focusTheme: DraftFocusTheme = .typewriterStudy {
         didSet { needsDisplay = true }
     }
+    var placeholder: String = "" {
+        didSet { needsDisplay = true }
+    }
+    var placeholderColor: NSColor = .secondaryLabelColor {
+        didSet { needsDisplay = true }
+    }
 
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         drawPaperLines(in: dirtyRect)
+        drawPlaceholderIfNeeded(in: dirtyRect)
         super.draw(dirtyRect)
     }
 
@@ -793,29 +791,55 @@ private final class DraftFocusTextView: NSTextView {
         ).fill()
     }
 
-    private func firstRuleY() -> CGFloat {
-        if let textContainer,
-           let layoutManager,
-           layoutManager.numberOfGlyphs > 0 {
-            layoutManager.ensureLayout(for: textContainer)
-            let lineFragmentRect = layoutManager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
-            let glyphLocation = layoutManager.location(forGlyphAt: 0)
-            return textContainerOrigin.y
-                + lineFragmentRect.minY
-                + glyphLocation.y
-                + DraftFocusPaperLayout.ruleOffsetBelowBaseline
-        }
+    private func drawPlaceholderIfNeeded(in dirtyRect: NSRect) {
+        guard string.isEmpty, !placeholder.isEmpty else { return }
 
-        guard let font else {
-            return textContainerOrigin.y + DraftFocusPaperLayout.lineHeight
+        let textRect = firstLineTextRect()
+        guard textRect.intersects(dirtyRect) else { return }
+
+        let paragraphStyle = (defaultParagraphStyle?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+        paragraphStyle.minimumLineHeight = linePitch()
+        paragraphStyle.maximumLineHeight = linePitch()
+        paragraphStyle.lineSpacing = 0
+        paragraphStyle.paragraphSpacing = 0
+        paragraphStyle.paragraphSpacingBefore = 0
+
+        placeholder.draw(
+            in: textRect,
+            withAttributes: [
+                .font: resolvedFont(),
+                .foregroundColor: placeholderColor,
+                .paragraphStyle: paragraphStyle
+            ]
+        )
+    }
+
+    private func firstRuleY() -> CGFloat {
+        return textContainerOrigin.y
+            + firstLineBaselineOffset()
+            + DraftFocusPaperLayout.ruleOffsetBelowBaseline
+    }
+
+    private func firstLineTextRect() -> NSRect {
+        NSRect(
+            x: textContainerOrigin.x,
+            y: textContainerOrigin.y,
+            width: ruleWidth(),
+            height: linePitch()
+        )
+    }
+
+    private func firstLineBaselineOffset() -> CGFloat {
+        let font = resolvedFont()
+        if let layoutManager {
+            let lineHeight = layoutManager.defaultLineHeight(for: font)
+            let verticalPadding = max(0, (linePitch() - lineHeight) / 2)
+            return verticalPadding + layoutManager.defaultBaselineOffset(for: font)
         }
 
         let fontLineHeight = font.ascender - font.descender + font.leading
         let verticalPadding = max(0, (linePitch() - fontLineHeight) / 2)
-        return textContainerOrigin.y
-            + verticalPadding
-            + font.ascender
-            + DraftFocusPaperLayout.ruleOffsetBelowBaseline
+        return verticalPadding + font.ascender
     }
 
     private func linePitch() -> CGFloat {
@@ -825,6 +849,16 @@ private final class DraftFocusTextView: NSTextView {
 
         let maxLineHeight = paragraphStyle.maximumLineHeight
         return maxLineHeight > 0 ? maxLineHeight : DraftFocusPaperLayout.lineHeight
+    }
+
+    private func resolvedFont() -> NSFont {
+        if let font {
+            return font
+        }
+        if let typingFont = typingAttributes[.font] as? NSFont {
+            return typingFont
+        }
+        return NSFont.monospacedSystemFont(ofSize: 19, weight: .regular)
     }
 
     private func ruleStartX() -> CGFloat {
