@@ -158,20 +158,29 @@ final class StickyNoteWindowManager {
         }
     }
 
-    func createNewSticky(siteID: Int, body: String = "") {
+    func createNewSticky(siteID: Int, body: String = "", generateTitleFromBody: Bool = false) {
         activeSiteID = siteID
         let frame = defaultFrame(siteID: siteID)
-        let title = StickyNoteText.title(for: body)
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title: String
+        let editorBody: String
+        if generateTitleFromBody && !trimmedBody.isEmpty {
+            title = StickyNoteText.generatedTitle(for: trimmedBody)
+            editorBody = StickyNoteText.editorBodyPreservingContent(title: title, content: trimmedBody)
+        } else {
+            title = StickyNoteText.title(for: body)
+            editorBody = body
+        }
         let document = StickyNoteDocument(
             siteID: siteID,
             title: title,
-            body: body,
+            body: editorBody,
             frame: frame
         )
         let controller = makeController(document: document)
         controllersBySite[siteID, default: [:]][controller.localID] = controller
         controller.show(focus: true)
-        if !body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if !editorBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             requestSave(for: controller, removeAfterSave: false)
         }
         notifyVisibilityChanged()
@@ -844,6 +853,16 @@ private enum StickyNoteText {
         return title.count > 64 ? String(title.prefix(64)) + "..." : title
     }
 
+    static func generatedTitle(for content: String) -> String {
+        let collapsed = content
+            .split { $0.isWhitespace || $0.isNewline }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = collapsed.isEmpty ? "Sticky Note" : collapsed
+        guard title.count > 48 else { return title }
+        return String(title.prefix(48)) + "..."
+    }
+
     static func titleField(for field: WPCOMRESTTextField) -> String {
         let candidates = [field.raw, field.rendered]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -878,6 +897,14 @@ private enum StickyNoteText {
             return trimmedTitle
         }
         return "\(trimmedTitle)\n\(content)"
+    }
+
+    static func editorBodyPreservingContent(title: String, content: String) -> String {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { return trimmedContent }
+        guard !trimmedContent.isEmpty else { return trimmedTitle }
+        return "\(trimmedTitle)\n\(trimmedContent)"
     }
 
     static func noteComponents(for editorBody: String, fallbackTitle: String) -> Components {
