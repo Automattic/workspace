@@ -5,9 +5,7 @@ private enum DraftFocusPaperLayout {
     static let textInsetY: CGFloat = 40
     static let lineHeight: CGFloat = 32
     static let ruleOffsetBelowBaseline: CGFloat = 1
-    static let ruleStartX: CGFloat = 44
-    static let ruleEndInset: CGFloat = 44
-    static let marginX: CGFloat = 52
+    static let marginGap: CGFloat = 20
 }
 
 private enum DraftFocusTheme: String, CaseIterable {
@@ -751,8 +749,8 @@ private final class DraftFocusEditorChrome: NSView {
         path.lineWidth = 1.5
         path.stroke()
 
-        NSColor.white.withAlphaComponent(0.12).setFill()
-        NSRect(x: pageRect.minX + 1, y: pageRect.minY + 1, width: pageRect.width - 2, height: 34).fill()
+        NSColor.white.withAlphaComponent(0.08).setFill()
+        NSRect(x: pageRect.minX + 1, y: pageRect.minY + 1, width: pageRect.width - 2, height: 24).fill()
     }
 }
 
@@ -778,9 +776,9 @@ private final class DraftFocusTextView: NSTextView {
         var y = firstLineY + startIndex * pitch
         while y <= dirtyRect.maxY + DraftFocusPaperLayout.lineHeight {
             NSRect(
-                x: DraftFocusPaperLayout.ruleStartX,
+                x: ruleStartX(),
                 y: y,
-                width: max(0, bounds.width - DraftFocusPaperLayout.ruleStartX - DraftFocusPaperLayout.ruleEndInset),
+                width: ruleWidth(),
                 height: 1
             ).fill()
             y += pitch
@@ -788,7 +786,7 @@ private final class DraftFocusTextView: NSTextView {
 
         focusTheme.accentColor.withAlphaComponent(0.10).setFill()
         NSRect(
-            x: DraftFocusPaperLayout.marginX,
+            x: max(0, ruleStartX() - DraftFocusPaperLayout.marginGap),
             y: dirtyRect.minY,
             width: 1,
             height: dirtyRect.height
@@ -827,6 +825,18 @@ private final class DraftFocusTextView: NSTextView {
 
         let maxLineHeight = paragraphStyle.maximumLineHeight
         return maxLineHeight > 0 ? maxLineHeight : DraftFocusPaperLayout.lineHeight
+    }
+
+    private func ruleStartX() -> CGFloat {
+        textContainerOrigin.x
+    }
+
+    private func ruleWidth() -> CGFloat {
+        if let textContainer, textContainer.containerSize.width.isFinite {
+            return max(0, textContainer.containerSize.width)
+        }
+
+        return max(0, bounds.width - textContainerOrigin.x * 2)
     }
 }
 
