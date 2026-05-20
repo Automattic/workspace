@@ -10,40 +10,11 @@ struct WritingEscapeMetrics {
     let comboBreaks: Int
 }
 
-private final class WritingEscapePanel: NSPanel {
-    private var allowsClose = false
-
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-
-    func forceClose() {
-        allowsClose = true
-        close()
-        allowsClose = false
-    }
-
-    override func close() {
-        guard allowsClose else {
-            NSSound.beep()
-            return
-        }
-        super.close()
-    }
-
-    override func cancelOperation(_ sender: Any?) {
-        NSSound.beep()
-    }
-
-    override func performClose(_ sender: Any?) {
-        close()
-    }
-}
-
 final class WritingEscapeOverlayManager {
     var onError: ((String) -> Void)?
     var onSaved: ((WPCOMGuideline, URL, Int) -> Void)?
 
-    private var panels: [WritingEscapePanel] = []
+    private var panels: [DraftOverlayPanel] = []
     private weak var gameView: WritingEscapeGameView?
     private var focusTimer: Timer?
     private var localKeyMonitor: Any?
@@ -114,11 +85,11 @@ final class WritingEscapeOverlayManager {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let saved = try await self.client.saveWritingEscapeArtifact(
+                let saved = try await self.client.saveDraftArtifact(
                     siteID: site.id,
-                    title: WritingEscapeArtifactText.title(for: body),
-                    excerpt: WritingEscapeArtifactText.excerpt(for: body),
-                    content: WritingEscapeArtifactText.content(body: body, metrics: metrics)
+                    title: DraftArtifactText.title(for: body),
+                    excerpt: DraftArtifactText.excerpt(for: body),
+                    content: DraftArtifactText.content(body: body)
                 )
 
                 await MainActor.run {
@@ -135,8 +106,8 @@ final class WritingEscapeOverlayManager {
         }
     }
 
-    private func makePanel(for screen: NSScreen) -> WritingEscapePanel {
-        let panel = WritingEscapePanel(
+    private func makePanel(for screen: NSScreen) -> DraftOverlayPanel {
+        let panel = DraftOverlayPanel(
             contentRect: screen.frame,
             styleMask: [.borderless, .fullSizeContentView],
             backing: .buffered,
@@ -371,7 +342,7 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
             completedAt: now,
             duration: now.timeIntervalSince(startedAt),
             peakWPM: peakWPM,
-            words: WritingEscapeArtifactText.wordCount(body),
+            words: DraftArtifactText.wordCount(body),
             characters: body.count,
             comboBreaks: comboBreaks
         )
@@ -976,34 +947,6 @@ private final class WritingEscapeBackdropView: NSView {
             at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
             withAttributes: attributes
         )
-    }
-}
-
-private enum WritingEscapeArtifactText {
-    static func title(for body: String) -> String {
-        let firstLine = body
-            .components(separatedBy: .newlines)
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = firstLine?.isEmpty == false ? firstLine! : "Write to Escape Draft"
-        return base.count > 68 ? String(base.prefix(68)) + "..." : base
-    }
-
-    static func excerpt(for body: String) -> String {
-        let collapsed = body
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard collapsed.count > 180 else { return collapsed }
-        return String(collapsed.prefix(180)) + "..."
-    }
-
-    static func content(body: String, metrics: WritingEscapeMetrics) -> String {
-        body
-    }
-
-    static func wordCount(_ body: String) -> Int {
-        body.split { $0.isWhitespace || $0.isNewline }.count
     }
 }
 

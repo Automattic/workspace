@@ -1546,7 +1546,7 @@ final class WPCOMClient: NSObject {
         return guidelines.first
     }
 
-    func saveWritingEscapeArtifact(
+    func saveDraftArtifact(
         siteID: Int,
         title: String,
         excerpt: String,
