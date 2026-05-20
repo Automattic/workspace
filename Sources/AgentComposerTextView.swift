@@ -10,6 +10,7 @@ struct AgentComposerTextView: NSViewRepresentable {
     let minimumHeight: CGFloat
     let maximumHeight: CGFloat
     let isDisabled: Bool
+    let onShiftSubmit: (() -> Void)?
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -118,6 +119,10 @@ struct AgentComposerTextView: NSViewRepresentable {
             }
 
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true {
+                if let onShiftSubmit = parent.onShiftSubmit {
+                    onShiftSubmit()
+                    return true
+                }
                 return false
             }
 
