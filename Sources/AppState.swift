@@ -424,7 +424,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let selectedWPCOMSiteIDStorageKey = "selected_wpcom_site_id"
     private let wpcomAppSiteOverridesStorageKey = "wpcom_app_site_overrides"
     private let wordpressAgentStarredSiteIDsStorageKey = "wordpress_agent_starred_site_ids"
-    private let wordpressAgentConversationsCacheStorageKey = "wordpress_agent_conversations_cache"
     private let lastNotifiedAppUpdateVersionStorageKey = "last_notified_app_update_version"
     private let networkRoutingSettingsStorageKey = "network_routing_settings"
     private let quickLauncherEnabledStorageKey = "quick_launcher_enabled"
@@ -908,7 +907,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
             ? quickLauncherIndexStore.cachedWordPressComUser()
             : nil
         let cachedWordPressAgentConversations = isInitiallyWordPressComSignedIn
-            ? Self.loadCachedWordPressAgentConversations(forKey: wordpressAgentConversationsCacheStorageKey)
+            ? Self.deduplicatedWordPressAgentConversations(
+                quickLauncherIndexStore.cachedWordPressAgentConversations() ?? []
+            )
             : []
         let cachedRemoteConversationCount = cachedWordPressAgentConversations.filter { $0.remoteChatID != nil }.count
         self.contextService = AppContextService()
@@ -1281,22 +1282,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         quickLauncherIndexStore.replaceCachedWordPressComUser(wordpressComUser)
     }
 
-    private static func loadCachedWordPressAgentConversations(forKey key: String) -> [WordPressAgentConversation] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([WordPressAgentConversation].self, from: data) else {
-            return []
-        }
-
-        let cacheableConversations: [WordPressAgentConversation] = decoded.compactMap { conversation in
-            guard !conversation.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            var cachedConversation = conversation
-            cachedConversation.isSending = false
-            cachedConversation.errorMessage = nil
-            return cachedConversation
-        }
-        return deduplicatedWordPressAgentConversations(cacheableConversations)
-    }
-
     private static func deduplicatedWordPressAgentConversations(
         _ conversations: [WordPressAgentConversation]
     ) -> [WordPressAgentConversation] {
@@ -1343,8 +1328,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let cacheableConversations = Self.deduplicatedWordPressAgentConversations(
             wordpressAgentConversations.filter { !$0.isEmptyLocalDraft }
         )
-        let storageKey = wordpressAgentConversationsCacheStorageKey
         let debounceNanoseconds = wordpressAgentConversationsCacheDebounceNanoseconds
+        let cacheStore = quickLauncherIndexStore
 
         pendingWordPressAgentConversationsCacheTask?.cancel()
         wordpressAgentConversationsCacheGeneration += 1
@@ -1359,17 +1344,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
             guard shouldPersist else { return }
 
-            guard let data = Self.encodedCachedWordPressAgentConversations(cacheableConversations),
-                  !Task.isCancelled else {
-                return
-            }
+            guard !Task.isCancelled else { return }
 
             let shouldStillPersist = await MainActor.run { [weak self] in
                 self?.wordpressAgentConversationsCacheGeneration == generation
             }
             guard shouldStillPersist else { return }
 
-            UserDefaults.standard.set(data, forKey: storageKey)
+            cacheStore.replaceCachedWordPressAgentConversations(cacheableConversations)
         }
     }
 
@@ -1377,12 +1359,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         pendingWordPressAgentConversationsCacheTask?.cancel()
         pendingWordPressAgentConversationsCacheTask = nil
         wordpressAgentConversationsCacheGeneration += 1
-    }
-
-    private static func encodedCachedWordPressAgentConversations(
-        _ conversations: [WordPressAgentConversation]
-    ) -> Data? {
-        try? JSONEncoder().encode(conversations)
     }
 
     private static func sortWordPressComAppSiteOverrides(_ lhs: WPCOMAppSiteOverride, _ rhs: WPCOMAppSiteOverride) -> Bool {
@@ -1451,7 +1427,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         hasLoadedWordPressAgentConversations = false
         wordpressAgentHistoryStatusMessage = nil
         transcribeSkill = nil
-        UserDefaults.standard.removeObject(forKey: wordpressAgentConversationsCacheStorageKey)
         wordpressComStatusMessage = "Signed out"
     }
 

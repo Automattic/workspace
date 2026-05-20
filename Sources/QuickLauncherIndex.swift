@@ -328,6 +328,40 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
         }
     }
 
+    func cachedWordPressAgentConversations() -> [WordPressAgentConversation]? {
+        queue.sync {
+            cachedRemoteJSON(
+                [WordPressAgentConversation].self,
+                scope: Self.globalCacheScope,
+                siteID: Self.globalCacheSiteID,
+                namespace: Self.wpcomAgentCacheNamespace,
+                key: Self.wpcomAgentConversationsCacheKey
+            )?.compactMap { conversation in
+                guard !conversation.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    return nil
+                }
+                var cachedConversation = conversation
+                cachedConversation.isSending = false
+                cachedConversation.errorMessage = nil
+                return cachedConversation
+            }
+        }
+    }
+
+    func replaceCachedWordPressAgentConversations(_ conversations: [WordPressAgentConversation]) {
+        queue.sync {
+            guard database != nil else { return }
+            upsertRemoteCacheJSON(
+                conversations,
+                scope: Self.globalCacheScope,
+                siteID: Self.globalCacheSiteID,
+                namespace: Self.wpcomAgentCacheNamespace,
+                key: Self.wpcomAgentConversationsCacheKey,
+                sourceURL: "https://public-api.wordpress.com/wpcom/v2/ai/chats"
+            )
+        }
+    }
+
     func cachedTranscribeGuideline(siteID: Int) -> WPCOMGuideline? {
         queue.sync {
             cachedRemoteJSON(
@@ -1452,9 +1486,11 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
     private static let globalCacheSiteID = 0
     private static let siteCacheScope = "site"
     private static let wpcomCacheNamespace = "wpcom"
+    private static let wpcomAgentCacheNamespace = "wpcom/agent"
     private static let wpV2CacheNamespace = "wp/v2"
     private static let wpcomSitesCacheKey = "sites"
     private static let wpcomUserCacheKey = "current_user"
+    private static let wpcomAgentConversationsCacheKey = "conversations"
     private static let transcribeGuidelineCacheKey = "guidelines/transcribe"
     private static let stickyNoteTermIDsCacheKey = "wp_guideline_type/sticky-note-term-ids"
 
