@@ -332,7 +332,7 @@ struct WPCOMGuidelineTerm: Decodable, Equatable {
     let parent: Int?
 }
 
-struct WPCOMRESTTextField: Decodable, Equatable {
+struct WPCOMRESTTextField: Codable, Equatable {
     let raw: String?
     let rendered: String?
 
@@ -356,9 +356,15 @@ struct WPCOMRESTTextField: Decodable, Equatable {
         raw = try? container.decode(String.self, forKey: .raw)
         rendered = try? container.decode(String.self, forKey: .rendered)
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(raw, forKey: .raw)
+        try container.encodeIfPresent(rendered, forKey: .rendered)
+    }
 }
 
-struct WPCOMStickyGuideline: Decodable, Equatable {
+struct WPCOMStickyGuideline: Codable, Equatable {
     let id: Int
     let slug: String
     let status: String?

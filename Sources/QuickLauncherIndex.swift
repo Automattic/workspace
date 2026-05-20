@@ -281,23 +281,14 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
     func replaceCachedWordPressComSites(_ sites: [WPCOMSite]) {
         queue.sync {
             guard database != nil else { return }
-            if sites.isEmpty {
-                deleteRemoteCache(
-                    scope: Self.globalCacheScope,
-                    siteID: Self.globalCacheSiteID,
-                    namespace: Self.wpcomCacheNamespace,
-                    key: Self.wpcomSitesCacheKey
-                )
-            } else {
-                upsertRemoteCacheJSON(
-                    sites,
-                    scope: Self.globalCacheScope,
-                    siteID: Self.globalCacheSiteID,
-                    namespace: Self.wpcomCacheNamespace,
-                    key: Self.wpcomSitesCacheKey,
-                    sourceURL: "https://public-api.wordpress.com/wpcom/v2/ai/agent/dolly/sites"
-                )
-            }
+            upsertRemoteCacheJSON(
+                sites,
+                scope: Self.globalCacheScope,
+                siteID: Self.globalCacheSiteID,
+                namespace: Self.wpcomCacheNamespace,
+                key: Self.wpcomSitesCacheKey,
+                sourceURL: "https://public-api.wordpress.com/wpcom/v2/ai/agent/dolly/sites"
+            )
         }
     }
 
@@ -333,6 +324,156 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
                 namespace: Self.wpcomCacheNamespace,
                 key: Self.wpcomUserCacheKey,
                 sourceURL: "https://public-api.wordpress.com/rest/v1.1/me"
+            )
+        }
+    }
+
+    func cachedTranscribeGuideline(siteID: Int) -> WPCOMGuideline? {
+        queue.sync {
+            cachedRemoteJSON(
+                WPCOMGuideline.self,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: Self.transcribeGuidelineCacheKey
+            )
+        }
+    }
+
+    func replaceCachedTranscribeGuideline(_ guideline: WPCOMGuideline?, siteID: Int) {
+        queue.sync {
+            guard database != nil else { return }
+            guard let guideline else {
+                deleteRemoteCache(
+                    scope: Self.siteCacheScope,
+                    siteID: siteID,
+                    namespace: Self.wpV2CacheNamespace,
+                    key: Self.transcribeGuidelineCacheKey
+                )
+                return
+            }
+
+            upsertRemoteCacheJSON(
+                guideline,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: Self.transcribeGuidelineCacheKey,
+                sourceURL: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines?slug=transcribe&context=edit"
+            )
+        }
+    }
+
+    func cachedStickyNoteTermIDs(siteID: Int) -> [Int]? {
+        queue.sync {
+            cachedRemoteJSON(
+                [Int].self,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: Self.stickyNoteTermIDsCacheKey
+            )
+        }
+    }
+
+    func replaceCachedStickyNoteTermIDs(_ termIDs: [Int], siteID: Int) {
+        queue.sync {
+            guard database != nil else { return }
+            guard !termIDs.isEmpty else {
+                deleteRemoteCache(
+                    scope: Self.siteCacheScope,
+                    siteID: siteID,
+                    namespace: Self.wpV2CacheNamespace,
+                    key: Self.stickyNoteTermIDsCacheKey
+                )
+                return
+            }
+
+            upsertRemoteCacheJSON(
+                termIDs,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: Self.stickyNoteTermIDsCacheKey,
+                sourceURL: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/wp_guideline_type"
+            )
+        }
+    }
+
+    func cachedStickyNoteGuidelines(siteID: Int, stickyTermID: Int) -> [WPCOMStickyGuideline]? {
+        queue.sync {
+            cachedRemoteJSON(
+                [WPCOMStickyGuideline].self,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: Self.stickyNoteGuidelinesCacheKey(stickyTermID: stickyTermID)
+            )
+        }
+    }
+
+    func replaceCachedStickyNoteGuidelines(
+        _ guidelines: [WPCOMStickyGuideline],
+        siteID: Int,
+        stickyTermID: Int
+    ) {
+        queue.sync {
+            guard database != nil else { return }
+            let key = Self.stickyNoteGuidelinesCacheKey(stickyTermID: stickyTermID)
+            upsertRemoteCacheJSON(
+                guidelines,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: key,
+                sourceURL: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines?wp_guideline_type=\(stickyTermID)&context=edit"
+            )
+
+            for guideline in guidelines {
+                writeCachedStickyNoteGuideline(guideline, siteID: siteID)
+            }
+        }
+    }
+
+    func cachedStickyNoteGuideline(siteID: Int, guidelineID: Int) -> WPCOMStickyGuideline? {
+        queue.sync {
+            cachedRemoteJSON(
+                WPCOMStickyGuideline.self,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: Self.stickyNoteGuidelineCacheKey(guidelineID: guidelineID)
+            )
+        }
+    }
+
+    func upsertCachedStickyNoteGuideline(
+        _ guideline: WPCOMStickyGuideline,
+        siteID: Int,
+        stickyTermID: Int? = nil
+    ) {
+        queue.sync {
+            guard database != nil else { return }
+            writeCachedStickyNoteGuideline(guideline, siteID: siteID)
+
+            guard let stickyTermID else { return }
+            let listKey = Self.stickyNoteGuidelinesCacheKey(stickyTermID: stickyTermID)
+            var guidelines = cachedRemoteJSON(
+                [WPCOMStickyGuideline].self,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: listKey
+            ) ?? []
+            guidelines.removeAll { $0.id == guideline.id }
+            guidelines.insert(guideline, at: 0)
+            upsertRemoteCacheJSON(
+                guidelines,
+                scope: Self.siteCacheScope,
+                siteID: siteID,
+                namespace: Self.wpV2CacheNamespace,
+                key: listKey,
+                sourceURL: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines?wp_guideline_type=\(stickyTermID)&context=edit"
             )
         }
     }
@@ -824,6 +965,17 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
         )
     }
 
+    private func writeCachedStickyNoteGuideline(_ guideline: WPCOMStickyGuideline, siteID: Int) {
+        upsertRemoteCacheJSON(
+            guideline,
+            scope: Self.siteCacheScope,
+            siteID: siteID,
+            namespace: Self.wpV2CacheNamespace,
+            key: Self.stickyNoteGuidelineCacheKey(guidelineID: guideline.id),
+            sourceURL: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/guidelines/\(guideline.id)?context=edit"
+        )
+    }
+
     private func entityCounts(siteID: Int?) -> [QuickLauncherEntityKind: Int] {
         guard let database else { return [:] }
         let filter = siteID == nil ? "" : "WHERE site_id = ?"
@@ -1298,9 +1450,21 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
 
     private static let globalCacheScope = "global"
     private static let globalCacheSiteID = 0
+    private static let siteCacheScope = "site"
     private static let wpcomCacheNamespace = "wpcom"
+    private static let wpV2CacheNamespace = "wp/v2"
     private static let wpcomSitesCacheKey = "sites"
     private static let wpcomUserCacheKey = "current_user"
+    private static let transcribeGuidelineCacheKey = "guidelines/transcribe"
+    private static let stickyNoteTermIDsCacheKey = "wp_guideline_type/sticky-note-term-ids"
+
+    private static func stickyNoteGuidelinesCacheKey(stickyTermID: Int) -> String {
+        "guidelines/sticky/\(stickyTermID)"
+    }
+
+    private static func stickyNoteGuidelineCacheKey(guidelineID: Int) -> String {
+        "guidelines/\(guidelineID)"
+    }
 }
 
 private enum SQLiteBinding {

@@ -820,6 +820,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var elevenLabsSpeechTask: Task<Void, Never>?
     private var elevenLabsAudioPlayer: AVAudioPlayer?
 
+    var workspaceCacheStore: QuickLauncherIndexStore {
+        quickLauncherIndexStore
+    }
+
     init() {
         UserDefaults.standard.removeObject(forKey: "force_http2_transcription")
         UserDefaults.standard.removeObject(forKey: "wordpress_agent_recent_site_ids")
@@ -1835,10 +1839,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return
         }
 
+        let cachedSkill = quickLauncherIndexStore.cachedTranscribeGuideline(siteID: siteID)
+        transcribeSkill = cachedSkill
         do {
-            transcribeSkill = try await wpcomClient.discoverTranscribeSkill(siteID: siteID)
+            let skill = try await wpcomClient.discoverTranscribeSkill(siteID: siteID)
+            quickLauncherIndexStore.replaceCachedTranscribeGuideline(skill, siteID: siteID)
+            transcribeSkill = skill
         } catch {
-            transcribeSkill = nil
+            transcribeSkill = cachedSkill
         }
     }
 

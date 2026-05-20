@@ -411,7 +411,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var imageDropOverlayCloseWorkItem: DispatchWorkItem?
     private var isImageDropOverlayTargeted = false
     private lazy var stickyNoteManager: StickyNoteWindowManager = {
-        let manager = StickyNoteWindowManager()
+        let manager = StickyNoteWindowManager(cacheStore: appState.workspaceCacheStore)
         manager.onError = { [weak self] message in
             self?.appState.errorMessage = message
         }
