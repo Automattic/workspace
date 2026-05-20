@@ -4,7 +4,7 @@ private enum DraftFocusPaperLayout {
     static let textInsetX: CGFloat = 72
     static let textInsetY: CGFloat = 40
     static let lineHeight: CGFloat = 32
-    static let ruleOffsetBelowBaseline: CGFloat = 2
+    static let ruleOffsetBelowBaseline: CGFloat = 1
     static let ruleStartX: CGFloat = 44
     static let ruleEndInset: CGFloat = 44
     static let marginX: CGFloat = 52
@@ -796,6 +796,18 @@ private final class DraftFocusTextView: NSTextView {
     }
 
     private func firstRuleY() -> CGFloat {
+        if let textContainer,
+           let layoutManager,
+           layoutManager.numberOfGlyphs > 0 {
+            layoutManager.ensureLayout(for: textContainer)
+            let lineFragmentRect = layoutManager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
+            let glyphLocation = layoutManager.location(forGlyphAt: 0)
+            return textContainerOrigin.y
+                + lineFragmentRect.minY
+                + glyphLocation.y
+                + DraftFocusPaperLayout.ruleOffsetBelowBaseline
+        }
+
         guard let font else {
             return textContainerOrigin.y + DraftFocusPaperLayout.lineHeight
         }
