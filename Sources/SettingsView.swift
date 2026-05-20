@@ -332,6 +332,7 @@ struct GeneralSettingsView: View {
             }
 
             indexStatRow("Indexed items", value: "\(stats.totalEntityCount)")
+            indexStatRow("Remote cache rows", value: "\(stats.remoteCacheEntryCount)")
             indexStatRow("Incremental cursors", value: "\(stats.endpointCursorCount)")
             indexStatRow("Last refresh", value: formattedIndexDate(stats.lastSyncedAt))
             indexStatRow("Last full rebuild", value: formattedIndexDate(stats.lastFullSyncedAt))

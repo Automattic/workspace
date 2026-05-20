@@ -113,6 +113,7 @@ struct QuickLauncherIndexStats: Equatable {
     let siteID: Int?
     let totalEntityCount: Int
     let countsByKind: [QuickLauncherEntityKind: Int]
+    let remoteCacheEntryCount: Int
     let endpointCursorCount: Int
     let lastSyncedAt: Date?
     let lastFullSyncedAt: Date?
@@ -124,6 +125,7 @@ struct QuickLauncherIndexStats: Equatable {
         siteID: nil,
         totalEntityCount: 0,
         countsByKind: [:],
+        remoteCacheEntryCount: 0,
         endpointCursorCount: 0,
         lastSyncedAt: nil,
         lastFullSyncedAt: nil,
@@ -254,6 +256,84 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
                 insert(entity)
             }
             commitTransaction()
+        }
+    }
+
+    func cachedWordPressComSites() -> [WPCOMSite]? {
+        queue.sync {
+            guard let sites = cachedRemoteJSON(
+                [WPCOMSite].self,
+                scope: Self.globalCacheScope,
+                siteID: Self.globalCacheSiteID,
+                namespace: Self.wpcomCacheNamespace,
+                key: Self.wpcomSitesCacheKey
+            ) else {
+                return nil
+            }
+
+            var seenSiteIDs = Set<Int>()
+            return sites.filter { site in
+                site.id > 0 && seenSiteIDs.insert(site.id).inserted
+            }
+        }
+    }
+
+    func replaceCachedWordPressComSites(_ sites: [WPCOMSite]) {
+        queue.sync {
+            guard database != nil else { return }
+            if sites.isEmpty {
+                deleteRemoteCache(
+                    scope: Self.globalCacheScope,
+                    siteID: Self.globalCacheSiteID,
+                    namespace: Self.wpcomCacheNamespace,
+                    key: Self.wpcomSitesCacheKey
+                )
+            } else {
+                upsertRemoteCacheJSON(
+                    sites,
+                    scope: Self.globalCacheScope,
+                    siteID: Self.globalCacheSiteID,
+                    namespace: Self.wpcomCacheNamespace,
+                    key: Self.wpcomSitesCacheKey,
+                    sourceURL: "https://public-api.wordpress.com/wpcom/v2/ai/agent/dolly/sites"
+                )
+            }
+        }
+    }
+
+    func cachedWordPressComUser() -> WPCOMUser? {
+        queue.sync {
+            cachedRemoteJSON(
+                WPCOMUser.self,
+                scope: Self.globalCacheScope,
+                siteID: Self.globalCacheSiteID,
+                namespace: Self.wpcomCacheNamespace,
+                key: Self.wpcomUserCacheKey
+            )
+        }
+    }
+
+    func replaceCachedWordPressComUser(_ user: WPCOMUser?) {
+        queue.sync {
+            guard database != nil else { return }
+            guard let user else {
+                deleteRemoteCache(
+                    scope: Self.globalCacheScope,
+                    siteID: Self.globalCacheSiteID,
+                    namespace: Self.wpcomCacheNamespace,
+                    key: Self.wpcomUserCacheKey
+                )
+                return
+            }
+
+            upsertRemoteCacheJSON(
+                user,
+                scope: Self.globalCacheScope,
+                siteID: Self.globalCacheSiteID,
+                namespace: Self.wpcomCacheNamespace,
+                key: Self.wpcomUserCacheKey,
+                sourceURL: "https://public-api.wordpress.com/rest/v1.1/me"
+            )
         }
     }
 
@@ -432,6 +512,7 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
                 siteID: siteID,
                 totalEntityCount: totalEntityCount,
                 countsByKind: countsByKind,
+                remoteCacheEntryCount: remoteCacheEntryCount(siteID: siteID),
                 endpointCursorCount: endpointCursorCount(siteID: siteID),
                 lastSyncedAt: syncState(siteID: siteID, scope: "site").lastSyncedAt,
                 lastFullSyncedAt: syncState(siteID: siteID, scope: "site-full").lastSyncedAt,
@@ -450,6 +531,7 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
             execute("DELETE FROM entities")
             execute("DELETE FROM sync_state")
             execute("DELETE FROM recent_opens")
+            execute("DELETE FROM remote_cache")
             commitTransaction()
         }
     }
@@ -570,6 +652,25 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
             open_count INTEGER NOT NULL DEFAULT 1
         )
         """)
+        execute("""
+        CREATE TABLE IF NOT EXISTS remote_cache (
+            scope TEXT NOT NULL,
+            site_id INTEGER NOT NULL DEFAULT 0,
+            namespace TEXT NOT NULL,
+            cache_key TEXT NOT NULL,
+            content_type TEXT NOT NULL DEFAULT 'application/json',
+            payload TEXT NOT NULL,
+            fetched_at REAL NOT NULL,
+            expires_at REAL,
+            last_modified TEXT,
+            etag TEXT,
+            source_url TEXT,
+            privacy_level TEXT NOT NULL DEFAULT 'private',
+            PRIMARY KEY(scope, site_id, namespace, cache_key)
+        )
+        """)
+        execute("CREATE INDEX IF NOT EXISTS remote_cache_site_idx ON remote_cache(site_id, namespace)")
+        execute("CREATE INDEX IF NOT EXISTS remote_cache_fetched_idx ON remote_cache(fetched_at)")
     }
 
     @discardableResult
@@ -672,6 +773,93 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
         sqlite3_step(statement)
     }
 
+    private func upsertRemoteCacheJSON<T: Encodable>(
+        _ value: T,
+        scope: String,
+        siteID: Int,
+        namespace: String,
+        key: String,
+        sourceURL: String?,
+        privacyLevel: String = "private"
+    ) {
+        guard let data = try? JSONEncoder().encode(value),
+              let payload = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        let sql = """
+        INSERT OR REPLACE INTO remote_cache(
+            scope, site_id, namespace, cache_key, content_type, payload, fetched_at,
+            expires_at, last_modified, etag, source_url, privacy_level
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        executePrepared(sql, bindings: [
+            .text(scope),
+            .int(siteID),
+            .text(namespace),
+            .text(key),
+            .text("application/json"),
+            .text(payload),
+            .double(Date().timeIntervalSince1970),
+            .null,
+            .null,
+            .null,
+            sourceURL.map(SQLiteBinding.text) ?? .null,
+            .text(privacyLevel)
+        ])
+    }
+
+    private func cachedRemoteJSON<T: Decodable>(
+        _ type: T.Type,
+        scope: String,
+        siteID: Int,
+        namespace: String,
+        key: String
+    ) -> T? {
+        guard let database else { return nil }
+        let sql = """
+        SELECT payload
+        FROM remote_cache
+        WHERE scope = ?
+          AND site_id = ?
+          AND namespace = ?
+          AND cache_key = ?
+        LIMIT 1
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(statement) }
+        bind(.text(scope), to: statement, index: 1)
+        bind(.int(siteID), to: statement, index: 2)
+        bind(.text(namespace), to: statement, index: 3)
+        bind(.text(key), to: statement, index: 4)
+
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              let payload = textColumn(statement, 0),
+              let data = payload.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(type, from: data)
+    }
+
+    private func deleteRemoteCache(scope: String, siteID: Int, namespace: String, key: String) {
+        executePrepared(
+            """
+            DELETE FROM remote_cache
+            WHERE scope = ?
+              AND site_id = ?
+              AND namespace = ?
+              AND cache_key = ?
+            """,
+            bindings: [
+                .text(scope),
+                .int(siteID),
+                .text(namespace),
+                .text(key)
+            ]
+        )
+    }
+
     private func entityCounts(siteID: Int?) -> [QuickLauncherEntityKind: Int] {
         guard let database else { return [:] }
         let filter = siteID == nil ? "" : "WHERE site_id = ?"
@@ -692,6 +880,28 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
             counts[kind] = Int(sqlite3_column_int64(statement, 1))
         }
         return counts
+    }
+
+    private func remoteCacheEntryCount(siteID: Int?) -> Int {
+        guard let database else { return 0 }
+        let sql: String
+        let bindings: [SQLiteBinding]
+        if let siteID {
+            sql = "SELECT COUNT(*) FROM remote_cache WHERE site_id IN (?, ?)"
+            bindings = [.int(Self.globalCacheSiteID), .int(siteID)]
+        } else {
+            sql = "SELECT COUNT(*) FROM remote_cache"
+            bindings = []
+        }
+
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(database, sql, -1, &statement, nil) == SQLITE_OK else { return 0 }
+        defer { sqlite3_finalize(statement) }
+        for (index, binding) in bindings.enumerated() {
+            bind(binding, to: statement, index: Int32(index + 1))
+        }
+        guard sqlite3_step(statement) == SQLITE_ROW else { return 0 }
+        return Int(sqlite3_column_int64(statement, 0))
     }
 
     private func endpointCursorCount(siteID: Int?) -> Int {
@@ -1121,6 +1331,12 @@ final class QuickLauncherIndexStore: @unchecked Sendable {
         "ninja_forms_submission",
         "ninja-forms-submission"
     ]
+
+    private static let globalCacheScope = "global"
+    private static let globalCacheSiteID = 0
+    private static let wpcomCacheNamespace = "wpcom"
+    private static let wpcomSitesCacheKey = "sites"
+    private static let wpcomUserCacheKey = "current_user"
 }
 
 private enum SQLiteBinding {

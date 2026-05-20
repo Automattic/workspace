@@ -778,7 +778,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     let overlayManager = RecordingOverlayManager()
     private let wpcomClient = WPCOMClient()
     private let elevenLabsClient = ElevenLabsClient()
-    private let quickLauncherIndexStore = QuickLauncherIndexStore()
+    private let quickLauncherIndexStore: QuickLauncherIndexStore
     private var accessibilityTimer: Timer?
     private var audioLevelCancellable: AnyCancellable?
     private var debugOverlayTimer: Timer?
@@ -897,18 +897,22 @@ final class AppState: ObservableObject, @unchecked Sendable {
             ? UserDefaults.standard.bool(forKey: quickLauncherIncrementalIndexingStorageKey)
             : true
 
-        self.contextService = AppContextService()
+        let quickLauncherIndexStore = QuickLauncherIndexStore()
         let isInitiallyWordPressComSignedIn = wpcomClient.isSignedIn
         let cachedWordPressComSites = isInitiallyWordPressComSignedIn
-            ? Self.loadCachedWordPressComSites(forKey: wordpressComSitesCacheStorageKey)
+            ? quickLauncherIndexStore.cachedWordPressComSites()
+                ?? Self.loadCachedWordPressComSites(forKey: wordpressComSitesCacheStorageKey)
             : []
         let cachedWordPressComUser = isInitiallyWordPressComSignedIn
-            ? Self.loadCachedWordPressComUser(forKey: wordpressComUserCacheStorageKey)
+            ? quickLauncherIndexStore.cachedWordPressComUser()
+                ?? Self.loadCachedWordPressComUser(forKey: wordpressComUserCacheStorageKey)
             : nil
         let cachedWordPressAgentConversations = isInitiallyWordPressComSignedIn
             ? Self.loadCachedWordPressAgentConversations(forKey: wordpressAgentConversationsCacheStorageKey)
             : []
         let cachedRemoteConversationCount = cachedWordPressAgentConversations.filter { $0.remoteChatID != nil }.count
+        self.contextService = AppContextService()
+        self.quickLauncherIndexStore = quickLauncherIndexStore
         self.hasCompletedSetup = hasCompletedSetup
         self.holdShortcut = shortcuts.hold
         self.toggleShortcut = shortcuts.toggle
@@ -951,6 +955,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 / wordpressAgentConversationPageSize) + 1
         )
         self.isWordPressComSignedIn = isInitiallyWordPressComSignedIn
+        if isInitiallyWordPressComSignedIn {
+            quickLauncherIndexStore.replaceCachedWordPressComSites(cachedWordPressComSites)
+            quickLauncherIndexStore.replaceCachedWordPressComUser(cachedWordPressComUser)
+            UserDefaults.standard.removeObject(forKey: wordpressComSitesCacheStorageKey)
+            UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
+        }
         AppNetworkSessionProvider.shared.update(settings: networkRoutingSettings)
         if quickLauncherEnabled {
             quickLauncherIndexStore.removePrivacyExcludedEntities()
@@ -1278,8 +1288,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     private func persistCachedWordPressComSites() {
-        guard let data = try? JSONEncoder().encode(wordpressComSites) else { return }
-        UserDefaults.standard.set(data, forKey: wordpressComSitesCacheStorageKey)
+        quickLauncherIndexStore.replaceCachedWordPressComSites(wordpressComSites)
+        UserDefaults.standard.removeObject(forKey: wordpressComSitesCacheStorageKey)
     }
 
     private static func loadCachedWordPressComUser(forKey key: String) -> WPCOMUser? {
@@ -1290,12 +1300,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     private func persistCachedWordPressComUser() {
-        guard let wordpressComUser else {
-            UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
-            return
-        }
-        guard let data = try? JSONEncoder().encode(wordpressComUser) else { return }
-        UserDefaults.standard.set(data, forKey: wordpressComUserCacheStorageKey)
+        quickLauncherIndexStore.replaceCachedWordPressComUser(wordpressComUser)
+        UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
     }
 
     private static func loadCachedWordPressAgentConversations(forKey key: String) -> [WordPressAgentConversation] {
