@@ -4,7 +4,7 @@ private enum DraftFocusPaperLayout {
     static let textInsetX: CGFloat = 72
     static let textInsetY: CGFloat = 40
     static let lineHeight: CGFloat = 32
-    static let lineBaselineOffset: CGFloat = 25
+    static let ruleOffsetBelowBaseline: CGFloat = 2
     static let ruleStartX: CGFloat = 44
     static let ruleEndInset: CGFloat = 44
     static let marginX: CGFloat = 52
@@ -368,6 +368,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     private var timer: Timer?
     private var isSaving = false
     private var theme = DraftFocusTheme.stored
+    private var isApplyingTextStyle = false
 
     override var isFlipped: Bool { true }
 
@@ -440,6 +441,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     }
 
     func textDidChange(_ notification: Notification) {
+        normalizeTextStyle()
         updateMetadata()
         saveErrorLabel.stringValue = ""
     }
@@ -611,7 +613,29 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
             .foregroundColor: theme.paperInkColor,
             .paragraphStyle: paragraphStyle
         ]
+        normalizeTextStyle()
         textView.needsDisplay = true
+    }
+
+    private func normalizeTextStyle() {
+        guard !isApplyingTextStyle else { return }
+        guard let textStorage = textView.textStorage, textStorage.length > 0 else { return }
+
+        isApplyingTextStyle = true
+        let selectedRanges = textView.selectedRanges
+        let paragraphStyle = textView.defaultParagraphStyle ?? NSParagraphStyle.default
+        textStorage.beginEditing()
+        textStorage.addAttributes(
+            [
+                .font: textView.font ?? NSFont.monospacedSystemFont(ofSize: 19, weight: .regular),
+                .foregroundColor: theme.paperInkColor,
+                .paragraphStyle: paragraphStyle
+            ],
+            range: NSRange(location: 0, length: textStorage.length)
+        )
+        textStorage.endEditing()
+        textView.selectedRanges = selectedRanges
+        isApplyingTextStyle = false
     }
 
     private func startTimer() {
@@ -748,9 +772,10 @@ private final class DraftFocusTextView: NSTextView {
         let lineColor = focusTheme.paperInkColor.withAlphaComponent(0.045)
         lineColor.setFill()
 
-        let firstLineY = DraftFocusPaperLayout.textInsetY + DraftFocusPaperLayout.lineBaselineOffset
-        let startIndex = max(0, floor((dirtyRect.minY - firstLineY) / DraftFocusPaperLayout.lineHeight))
-        var y = firstLineY + startIndex * DraftFocusPaperLayout.lineHeight
+        let firstLineY = firstRuleY()
+        let pitch = linePitch()
+        let startIndex = max(0, floor((dirtyRect.minY - firstLineY) / pitch))
+        var y = firstLineY + startIndex * pitch
         while y <= dirtyRect.maxY + DraftFocusPaperLayout.lineHeight {
             NSRect(
                 x: DraftFocusPaperLayout.ruleStartX,
@@ -758,7 +783,7 @@ private final class DraftFocusTextView: NSTextView {
                 width: max(0, bounds.width - DraftFocusPaperLayout.ruleStartX - DraftFocusPaperLayout.ruleEndInset),
                 height: 1
             ).fill()
-            y += DraftFocusPaperLayout.lineHeight
+            y += pitch
         }
 
         focusTheme.accentColor.withAlphaComponent(0.10).setFill()
@@ -768,6 +793,28 @@ private final class DraftFocusTextView: NSTextView {
             width: 1,
             height: dirtyRect.height
         ).fill()
+    }
+
+    private func firstRuleY() -> CGFloat {
+        guard let font else {
+            return textContainerOrigin.y + DraftFocusPaperLayout.lineHeight
+        }
+
+        let fontLineHeight = font.ascender - font.descender + font.leading
+        let verticalPadding = max(0, (linePitch() - fontLineHeight) / 2)
+        return textContainerOrigin.y
+            + verticalPadding
+            + font.ascender
+            + DraftFocusPaperLayout.ruleOffsetBelowBaseline
+    }
+
+    private func linePitch() -> CGFloat {
+        guard let paragraphStyle = defaultParagraphStyle else {
+            return DraftFocusPaperLayout.lineHeight
+        }
+
+        let maxLineHeight = paragraphStyle.maximumLineHeight
+        return maxLineHeight > 0 ? maxLineHeight : DraftFocusPaperLayout.lineHeight
     }
 }
 
