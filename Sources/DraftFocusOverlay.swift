@@ -1,28 +1,5 @@
 import AppKit
 
-enum DraftExperienceTemplate: String, CaseIterable {
-    case draftFocus = "draft-focus"
-    case writeToEscape = "write-to-escape"
-
-    var displayName: String {
-        switch self {
-        case .draftFocus:
-            return "Draft Focus"
-        case .writeToEscape:
-            return "Write to Escape"
-        }
-    }
-
-    var menuImageName: String {
-        switch self {
-        case .draftFocus:
-            return "doc.text"
-        case .writeToEscape:
-            return "square.and.pencil"
-        }
-    }
-}
-
 private enum DraftFocusPaperLayout {
     static let textInsetX: CGFloat = 72
     static let textInsetY: CGFloat = 40
@@ -227,7 +204,7 @@ final class DraftOverlayPanel: NSPanel {
 final class DraftFocusOverlayManager {
     var onError: ((String) -> Void)?
     var onSaved: ((WPCOMGuideline, URL, Int) -> Void)?
-    var onExperienceRequested: ((DraftExperienceTemplate, WPCOMSite, String) -> Void)?
+    var onWriteToEscapeRequested: ((WPCOMSite, String) -> Void)?
 
     private var panels: [DraftOverlayPanel] = []
     private weak var focusView: DraftFocusView?
@@ -256,11 +233,10 @@ final class DraftFocusOverlayManager {
                     onCloseRequested: { [weak self] in
                         self?.dismiss()
                     },
-                    onExperienceRequested: { [weak self] template in
-                        guard template != .draftFocus else { return }
+                    onWriteToEscapeRequested: { [weak self] in
                         let body = self?.focusView?.body ?? ""
                         self?.dismiss()
-                        self?.onExperienceRequested?(template, site, body)
+                        self?.onWriteToEscapeRequested?(site, body)
                     }
                 )
                 panel.contentView = view
@@ -373,12 +349,11 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     private let siteName: String?
     private let onSaveRequested: (String) -> Void
     private let onCloseRequested: () -> Void
-    private let onExperienceRequested: (DraftExperienceTemplate) -> Void
+    private let onWriteToEscapeRequested: () -> Void
     private let startedAt = Date()
 
     private let closeButton = DraftFocusButton(title: "Close", style: .secondary)
     private let saveButton = DraftFocusButton(title: "Save and Close", style: .primary)
-    private let experiencePicker = DraftFocusPickerButton(prefix: "Experience", frame: .zero)
     private let themePicker = DraftFocusPickerButton(prefix: "Scene", frame: .zero)
     private let titleLabel = NSTextField(labelWithString: "Draft Focus")
     private let subtitleLabel = NSTextField(labelWithString: "")
@@ -401,12 +376,12 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         siteName: String?,
         onSaveRequested: @escaping (String) -> Void,
         onCloseRequested: @escaping () -> Void,
-        onExperienceRequested: @escaping (DraftExperienceTemplate) -> Void
+        onWriteToEscapeRequested: @escaping () -> Void
     ) {
         self.siteName = siteName
         self.onSaveRequested = onSaveRequested
         self.onCloseRequested = onCloseRequested
-        self.onExperienceRequested = onExperienceRequested
+        self.onWriteToEscapeRequested = onWriteToEscapeRequested
         super.init(frame: frameRect)
         setupView()
         startTimer()
@@ -479,39 +454,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         onCloseRequested()
     }
 
-    @objc private func experiencePickerPressed() {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-
-        for template in DraftExperienceTemplate.allCases {
-            let item = NSMenuItem(
-                title: template.displayName,
-                action: #selector(experienceMenuItemSelected(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = template.rawValue
-            item.state = template == .draftFocus ? .on : .off
-            menu.addItem(item)
-        }
-
-        menu.popUp(
-            positioning: nil,
-            at: NSPoint(x: 0, y: experiencePicker.bounds.height + 6),
-            in: experiencePicker
-        )
-    }
-
-    @objc private func experienceMenuItemSelected(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let template = DraftExperienceTemplate(rawValue: rawValue),
-              template != .draftFocus else {
-            return
-        }
-
-        onExperienceRequested(template)
-    }
-
     @objc private func themePickerPressed() {
         let menu = NSMenu()
         menu.autoenablesItems = false
@@ -528,6 +470,16 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
             menu.addItem(item)
         }
 
+        menu.addItem(.separator())
+        let writeToEscapeItem = NSMenuItem(
+            title: "Write to Escape",
+            action: #selector(themeMenuItemSelected(_:)),
+            keyEquivalent: ""
+        )
+        writeToEscapeItem.target = self
+        writeToEscapeItem.representedObject = "write-to-escape"
+        menu.addItem(writeToEscapeItem)
+
         menu.popUp(
             positioning: nil,
             at: NSPoint(x: 0, y: themePicker.bounds.height + 6),
@@ -536,8 +488,14 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     }
 
     @objc private func themeMenuItemSelected(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let selectedTheme = DraftFocusTheme(rawValue: rawValue) else { return }
+        guard let rawValue = sender.representedObject as? String else { return }
+
+        if rawValue == "write-to-escape" {
+            onWriteToEscapeRequested()
+            return
+        }
+
+        guard let selectedTheme = DraftFocusTheme(rawValue: rawValue) else { return }
 
         theme = selectedTheme
         theme.persist()
@@ -579,11 +537,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         saveButton.isEnabled = false
         addSubview(closeButton)
         addSubview(saveButton)
-
-        experiencePicker.target = self
-        experiencePicker.action = #selector(experiencePickerPressed)
-        experiencePicker.selectedTitle = DraftExperienceTemplate.draftFocus.displayName
-        addSubview(experiencePicker)
 
         themePicker.target = self
         themePicker.action = #selector(themePickerPressed)
@@ -638,8 +591,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         editorChrome.theme = theme
         closeButton.theme = theme
         saveButton.theme = theme
-        experiencePicker.theme = theme
-        experiencePicker.selectedTitle = DraftExperienceTemplate.draftFocus.displayName
         themePicker.theme = theme
         themePicker.selectedTitle = theme.displayName
         applyPaperParagraphStyle()
@@ -693,7 +644,6 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         closeButton.frame = NSRect(x: left, y: top, width: 96, height: 38)
         saveButton.frame = NSRect(x: left + contentWidth - 168, y: top, width: 168, height: 38)
         themePicker.frame = NSRect(x: saveButton.frame.minX - 236, y: top, width: 220, height: 38)
-        experiencePicker.frame = NSRect(x: themePicker.frame.minX - 236, y: top, width: 220, height: 38)
 
         titleLabel.frame = NSRect(x: left, y: top + 64, width: contentWidth, height: 42)
         subtitleLabel.frame = NSRect(x: left + 2, y: top + 108, width: contentWidth - 4, height: 22)

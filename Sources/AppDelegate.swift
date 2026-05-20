@@ -362,9 +362,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.handleSavedDraftArtifact(guideline, editURL: editURL, siteID: siteID)
             }
         }
-        manager.onExperienceRequested = { [weak self] template, site, body in
+        manager.onWriteToEscapeRequested = { [weak self] site, body in
             Task { @MainActor in
-                self?.showDraftExperience(template, site: site, initialText: body)
+                self?.showWritingEscapeOverlay(site: site, initialText: body)
             }
         }
         return manager
@@ -915,7 +915,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(submenuItem(title: "Microphone", submenu: microphoneMenu()))
 
         menu.addItem(.separator())
-        menu.addItem(submenuItem(title: "Draft Experiences", submenu: draftExperienceMenu()))
+        let draftFocusItem = actionItem("Draft Focus Mode", imageName: "doc.text") { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self?.showDraftFocusOverlay()
+            }
+        }
+        draftFocusItem.isEnabled = canShowDraftOverlay
+        menu.addItem(draftFocusItem)
 
         menu.addItem(.separator())
         menu.addItem(actionItem("Settings") {
@@ -930,23 +936,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    private func draftExperienceMenu() -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-
-        for template in DraftExperienceTemplate.allCases {
-            let item = actionItem(template.displayName, imageName: template.menuImageName) { [weak self] in
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    self?.showDraftExperience(template)
-                }
-            }
-            item.isEnabled = canShowDraftOverlay
-            menu.addItem(item)
-        }
-
-        return menu
-    }
-
     private var canShowDraftOverlay: Bool {
         appState.isWordPressComSignedIn
             && appState.selectedWordPressComSiteID != nil
@@ -955,18 +944,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showDraftFocusOverlay() {
-        showDraftExperience(.draftFocus)
+        guard appState.isWordPressComSignedIn,
+              let site = appState.selectedWordPressComSite else {
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsWindow()
+            return
+        }
+
+        writingEscapeOverlayManager.dismiss()
+        draftFocusOverlayManager.show(site: site)
     }
 
-    private func showWritingEscapeOverlay() {
-        showDraftExperience(.writeToEscape)
-    }
-
-    private func showDraftExperience(
-        _ template: DraftExperienceTemplate,
-        site providedSite: WPCOMSite? = nil,
-        initialText: String = ""
-    ) {
+    private func showWritingEscapeOverlay(site providedSite: WPCOMSite? = nil, initialText: String = "") {
         guard appState.isWordPressComSignedIn,
               let site = providedSite ?? appState.selectedWordPressComSite else {
             appState.selectedSettingsTab = .wordpressCom
@@ -974,14 +963,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        switch template {
-        case .draftFocus:
-            writingEscapeOverlayManager.dismiss()
-            draftFocusOverlayManager.show(site: site)
-        case .writeToEscape:
-            draftFocusOverlayManager.dismiss()
-            writingEscapeOverlayManager.show(site: site, initialText: initialText)
-        }
+        draftFocusOverlayManager.dismiss()
+        writingEscapeOverlayManager.show(site: site, initialText: initialText)
     }
 
     private var appVersion: String {
