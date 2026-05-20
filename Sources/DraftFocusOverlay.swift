@@ -337,7 +337,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
 
     private let closeButton = DraftFocusButton(title: "Close", style: .secondary)
     private let saveButton = DraftFocusButton(title: "Save and Close", style: .primary)
-    private let themePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let themePicker = DraftFocusThemePickerButton(frame: .zero)
     private let titleLabel = NSTextField(labelWithString: "Draft Focus")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let wordCountLabel = NSTextField(labelWithString: "0 words")
@@ -431,11 +431,32 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         onCloseRequested()
     }
 
-    @objc private func themePickerChanged() {
-        guard let rawValue = themePicker.selectedItem?.representedObject as? String,
-              let selectedTheme = DraftFocusTheme(rawValue: rawValue) else {
-            return
+    @objc private func themePickerPressed() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        for draftTheme in DraftFocusTheme.allCases {
+            let item = NSMenuItem(
+                title: draftTheme.displayName,
+                action: #selector(themeMenuItemSelected(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = draftTheme.rawValue
+            item.state = draftTheme == theme ? .on : .off
+            menu.addItem(item)
         }
+
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: themePicker.bounds.height + 6),
+            in: themePicker
+        )
+    }
+
+    @objc private func themeMenuItemSelected(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let selectedTheme = DraftFocusTheme(rawValue: rawValue) else { return }
 
         theme = selectedTheme
         theme.persist()
@@ -479,16 +500,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         addSubview(saveButton)
 
         themePicker.target = self
-        themePicker.action = #selector(themePickerChanged)
-        themePicker.controlSize = .small
-        themePicker.font = .systemFont(ofSize: 12, weight: .medium)
-        themePicker.bezelStyle = .rounded
-        themePicker.isBordered = true
-        for draftTheme in DraftFocusTheme.allCases {
-            themePicker.addItem(withTitle: draftTheme.displayName)
-            themePicker.item(withTitle: draftTheme.displayName)?.representedObject = draftTheme.rawValue
-        }
-        themePicker.selectItem(withTitle: theme.displayName)
+        themePicker.action = #selector(themePickerPressed)
         addSubview(themePicker)
 
         editorChrome.addSubview(scrollView)
@@ -534,6 +546,8 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         editorChrome.theme = theme
         closeButton.theme = theme
         saveButton.theme = theme
+        themePicker.theme = theme
+        themePicker.selectedTheme = theme
         needsDisplay = true
         needsLayout = true
     }
@@ -567,7 +581,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
 
         closeButton.frame = NSRect(x: left, y: top, width: 96, height: 38)
         saveButton.frame = NSRect(x: left + contentWidth - 168, y: top, width: 168, height: 38)
-        themePicker.frame = NSRect(x: saveButton.frame.minX - 184, y: top + 4, width: 172, height: 30)
+        themePicker.frame = NSRect(x: saveButton.frame.minX - 236, y: top, width: 220, height: 38)
 
         titleLabel.frame = NSRect(x: left, y: top + 64, width: contentWidth, height: 42)
         subtitleLabel.frame = NSRect(x: left + 2, y: top + 108, width: contentWidth - 4, height: 22)
@@ -751,6 +765,65 @@ private final class DraftFocusButton: NSControl {
             NSSound.beep()
             return
         }
+        sendAction(action, to: target)
+    }
+}
+
+private final class DraftFocusThemePickerButton: NSControl {
+    var selectedTheme: DraftFocusTheme = .typewriterStudy {
+        didSet { needsDisplay = true }
+    }
+    var theme: DraftFocusTheme = .typewriterStudy {
+        didSet { needsDisplay = true }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let rect = bounds.insetBy(dx: 1, dy: 1)
+        let path = NSBezierPath(roundedRect: rect, xRadius: 9, yRadius: 9)
+
+        NSColor.black.withAlphaComponent(0.28).setFill()
+        path.fill()
+
+        theme.accentColor.withAlphaComponent(0.34).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        theme.accentColor.withAlphaComponent(0.18).setFill()
+        NSBezierPath(
+            roundedRect: NSRect(x: rect.minX + 6, y: rect.minY + 6, width: 26, height: rect.height - 12),
+            xRadius: 6,
+            yRadius: 6
+        ).fill()
+
+        let title = "Scene: \(selectedTheme.displayName)  v"
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .left
+        paragraph.lineBreakMode = .byTruncatingTail
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
+            .foregroundColor: theme.inkColor,
+            .paragraphStyle: paragraph
+        ]
+        let textRect = NSRect(x: rect.minX + 42, y: rect.minY, width: rect.width - 54, height: rect.height)
+        let measured = (title as NSString).boundingRect(
+            with: NSSize(width: textRect.width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
+        title.draw(
+            in: NSRect(
+                x: textRect.minX,
+                y: textRect.midY - measured.height / 2,
+                width: textRect.width,
+                height: measured.height + 2
+            ),
+            withAttributes: attributes
+        )
+    }
+
+    override func mouseDown(with event: NSEvent) {
         sendAction(action, to: target)
     }
 }
