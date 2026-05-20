@@ -208,6 +208,23 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
         let characters: Int
     }
 
+    private enum ParticleKind {
+        case shootingStar
+        case spark
+        case firework
+    }
+
+    private struct Particle {
+        var kind: ParticleKind
+        var position: CGPoint
+        var velocity: CGVector
+        var color: NSColor
+        var radius: CGFloat
+        var age: TimeInterval
+        var lifetime: TimeInterval
+        var trailLength: CGFloat
+    }
+
     private let siteName: String?
     private let onEscapeRequested: (String, WritingEscapeMetrics) -> Void
     private let onEmergencyEscapeRequested: () -> Void
@@ -248,6 +265,10 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
     private var emergencyEscapeProgress: TimeInterval = 0
     private var shakePhase: CGFloat = 0
     private var currentWPM: Double = 0
+    private var particles: [Particle] = []
+    private var lastShootingStarAt: TimeInterval = 0
+    private var lastFireworkAt: TimeInterval = 0
+    private var didSpawnUnlockBurst = false
 
     override var isFlipped: Bool { true }
 
@@ -427,7 +448,7 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
 
         escapeButton.target = self
         escapeButton.action = #selector(escapeButtonPressed)
-        escapeButton.title = "Locked: write 30 seconds"
+        escapeButton.title = "No escape without a draft: Write continuously for 30 seconds to escape"
         escapeButton.isEnabled = false
         escapeButton.wantsLayer = true
         escapeButton.layer?.zPosition = 1000
@@ -473,6 +494,7 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
         updateEmergencyEscape(now: now)
         updateLabels(qualified: qualified)
         updateEffects()
+        updateParticles(delta: delta, now: now)
         needsDisplay = true
         layoutGame()
     }
@@ -493,6 +515,7 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
         progressView.isHardMode = currentWPM >= targetWPM * 1.8
         hatchProgressView.progress = CGFloat(emergencyEscapeProgress / emergencyEscapeDuration)
         hatchProgressView.isHardMode = emergencyEscapeProgress > 0
+        escapeButton.progress = CGFloat(streak / requiredStreak)
 
         if isUnlocked {
             statusLabel.stringValue = isSaving
@@ -519,6 +542,116 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
         shakePhase += 0.44 + intensity * 0.4
     }
 
+    private func updateParticles(delta: TimeInterval, now: TimeInterval) {
+        particles = particles.compactMap { particle in
+            var next = particle
+            next.age += delta
+            guard next.age < next.lifetime else { return nil }
+            next.position.x += next.velocity.dx * CGFloat(delta)
+            next.position.y += next.velocity.dy * CGFloat(delta)
+            next.velocity.dy += gravity(for: next.kind) * CGFloat(delta)
+            return next
+        }
+
+        let progress = streak / requiredStreak
+        if progress > 0.45, now - lastShootingStarAt > shootingStarInterval(progress: progress) {
+            spawnShootingStar(progress: progress)
+            lastShootingStarAt = now
+        }
+
+        if progress > 0.82, now - lastFireworkAt > fireworkInterval(progress: progress) {
+            spawnFirework(
+                at: CGPoint(
+                    x: CGFloat.random(in: bounds.width * 0.18...bounds.width * 0.82),
+                    y: CGFloat.random(in: bounds.height * 0.08...bounds.height * 0.24)
+                ),
+                scale: 0.74,
+                color: progress > 0.94 ? .escapeGreen : .escapeAmber
+            )
+            lastFireworkAt = now
+        }
+    }
+
+    private func shootingStarInterval(progress: TimeInterval) -> TimeInterval {
+        max(0.38, 1.4 - progress * 0.85)
+    }
+
+    private func fireworkInterval(progress: TimeInterval) -> TimeInterval {
+        max(0.42, 1.1 - progress * 0.55)
+    }
+
+    private func gravity(for kind: ParticleKind) -> CGFloat {
+        switch kind {
+        case .shootingStar:
+            return 10
+        case .spark:
+            return 55
+        case .firework:
+            return 90
+        }
+    }
+
+    private func spawnShootingStar(progress: TimeInterval) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let startX = CGFloat.random(in: bounds.width * 0.04...bounds.width * 0.9)
+        let startY = CGFloat.random(in: bounds.height * 0.04...bounds.height * 0.22)
+        let speed = CGFloat.random(in: 420...620) * (0.86 + CGFloat(progress) * 0.28)
+        let color: NSColor = progress > 0.78 ? .escapeGreen : .escapeAmber
+        particles.append(Particle(
+            kind: .shootingStar,
+            position: CGPoint(x: startX, y: startY),
+            velocity: CGVector(dx: speed, dy: CGFloat.random(in: 95...165)),
+            color: color,
+            radius: CGFloat.random(in: 2.2...3.6),
+            age: 0,
+            lifetime: 1.1,
+            trailLength: CGFloat.random(in: 70...130)
+        ))
+
+        if progress > 0.68 {
+            spawnProgressSparks(progress: progress)
+        }
+    }
+
+    private func spawnProgressSparks(progress: TimeInterval) {
+        let progressWidth = progressView.frame.width * CGFloat(min(max(progress, 0), 1))
+        let origin = CGPoint(
+            x: progressView.frame.minX + progressWidth,
+            y: progressView.frame.midY
+        )
+        for _ in 0..<4 {
+            particles.append(Particle(
+                kind: .spark,
+                position: origin,
+                velocity: CGVector(dx: CGFloat.random(in: -70...60), dy: CGFloat.random(in: -95...45)),
+                color: .escapeGreen,
+                radius: CGFloat.random(in: 1.4...2.6),
+                age: 0,
+                lifetime: TimeInterval(CGFloat.random(in: 0.45...0.8)),
+                trailLength: 0
+            ))
+        }
+    }
+
+    private func spawnFirework(at origin: CGPoint, scale: CGFloat, color: NSColor) {
+        let count = Int(18 * scale)
+        for index in 0..<count {
+            let angle = CGFloat(index) / CGFloat(count) * CGFloat.pi * 2 + CGFloat.random(in: -0.12...0.12)
+            let speed = CGFloat.random(in: 70...160) * scale
+            let resolvedColor: NSColor = Bool.random() ? color : .escapeAmber
+            particles.append(Particle(
+                kind: .firework,
+                position: origin,
+                velocity: CGVector(dx: cos(angle) * speed, dy: sin(angle) * speed),
+                color: resolvedColor,
+                radius: CGFloat.random(in: 1.8...3.4) * scale,
+                age: 0,
+                lifetime: TimeInterval(CGFloat.random(in: 0.75...1.25)),
+                trailLength: 0
+            ))
+        }
+    }
+
     private func updateEmergencyEscape(now: TimeInterval) {
         guard let emergencyHoldStartedAt else {
             emergencyEscapeProgress = 0
@@ -537,6 +670,11 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
         isUnlocked = true
         escapeButton.isEnabled = true
         escapeButton.title = "Save and Close"
+        if !didSpawnUnlockBurst {
+            didSpawnUnlockBurst = true
+            spawnFirework(at: CGPoint(x: bounds.midX, y: bounds.height * 0.18), scale: 1.35, color: .escapeGreen)
+            spawnFirework(at: CGPoint(x: bounds.width * 0.72, y: bounds.height * 0.15), scale: 0.95, color: .escapeAmber)
+        }
         escapeButton.alphaValue = 0
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.25
@@ -553,7 +691,8 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
         let controlsTop = top + 8
         hatchLabel.frame = NSRect(x: left, y: controlsTop + 8, width: 278, height: 18)
         hatchProgressView.frame = NSRect(x: left + 286, y: controlsTop + 12, width: 150, height: 10)
-        escapeButton.frame = NSRect(x: left + contentWidth - 250, y: controlsTop, width: 250, height: 38)
+        let buttonWidth = min(520, max(300, contentWidth - 460))
+        escapeButton.frame = NSRect(x: left + contentWidth - buttonWidth, y: controlsTop, width: buttonWidth, height: 48)
 
         titleLabel.frame = NSRect(x: left, y: top + 62, width: contentWidth, height: 54)
         subtitleLabel.frame = NSRect(x: left + 2, y: top + 116, width: contentWidth, height: 24)
@@ -605,6 +744,8 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
             NSRect(x: 0, y: y, width: bounds.width, height: 1).fill()
         }
 
+        drawParticles()
+
         let warning = "NO ESCAPE WITHOUT A DRAFT"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .bold),
@@ -614,6 +755,67 @@ private final class WritingEscapeGameView: NSView, NSTextViewDelegate {
             warning.draw(at: NSPoint(x: 24, y: y), withAttributes: attributes)
             warning.draw(at: NSPoint(x: bounds.width - 250, y: y + 38), withAttributes: attributes)
         }
+    }
+
+    private func drawParticles() {
+        guard !particles.isEmpty else { return }
+        guard let cgContext = NSGraphicsContext.current?.cgContext else { return }
+
+        cgContext.saveGState()
+        cgContext.setBlendMode(.plusLighter)
+
+        for particle in particles {
+            let remaining = max(0, 1 - CGFloat(particle.age / particle.lifetime))
+            let color = particle.color.withAlphaComponent(0.18 + 0.78 * remaining)
+            color.setFill()
+            color.setStroke()
+
+            switch particle.kind {
+            case .shootingStar:
+                let speed = max(1, sqrt(particle.velocity.dx * particle.velocity.dx + particle.velocity.dy * particle.velocity.dy))
+                let tail = CGPoint(
+                    x: particle.position.x - particle.velocity.dx / speed * particle.trailLength,
+                    y: particle.position.y - particle.velocity.dy / speed * particle.trailLength
+                )
+                let path = NSBezierPath()
+                path.move(to: tail)
+                path.line(to: particle.position)
+                path.lineWidth = max(1, particle.radius * remaining)
+                path.stroke()
+                drawStar(at: particle.position, radius: particle.radius * (1.3 + remaining), color: color)
+            case .spark, .firework:
+                let radius = max(0.6, particle.radius * remaining)
+                NSBezierPath(ovalIn: NSRect(
+                    x: particle.position.x - radius,
+                    y: particle.position.y - radius,
+                    width: radius * 2,
+                    height: radius * 2
+                )).fill()
+            }
+        }
+
+        cgContext.restoreGState()
+    }
+
+    private func drawStar(at point: CGPoint, radius: CGFloat, color: NSColor) {
+        let path = NSBezierPath()
+        let points = 5
+        for index in 0..<(points * 2) {
+            let angle = CGFloat(index) * CGFloat.pi / CGFloat(points) - CGFloat.pi / 2
+            let resolvedRadius = index.isMultiple(of: 2) ? radius : radius * 0.42
+            let vertex = CGPoint(
+                x: point.x + cos(angle) * resolvedRadius,
+                y: point.y + sin(angle) * resolvedRadius
+            )
+            if index == 0 {
+                path.move(to: vertex)
+            } else {
+                path.line(to: vertex)
+            }
+        }
+        path.close()
+        color.setFill()
+        path.fill()
     }
 }
 
@@ -677,6 +879,9 @@ private final class WritingEscapeActionButton: NSControl {
     var title: String = "" {
         didSet { needsDisplay = true }
     }
+    var progress: CGFloat = 0 {
+        didSet { needsDisplay = true }
+    }
 
     override var isEnabled: Bool {
         didSet { needsDisplay = true }
@@ -687,32 +892,52 @@ private final class WritingEscapeActionButton: NSControl {
     override func draw(_ dirtyRect: NSRect) {
         let rect = bounds.insetBy(dx: 1, dy: 1)
         let path = NSBezierPath(roundedRect: rect, xRadius: 10, yRadius: 10)
+        let clampedProgress = min(max(progress, 0), 1)
         let fill = isEnabled
             ? NSColor.escapeGreen
-            : NSColor(calibratedRed: 0.11, green: 0.13, blue: 0.12, alpha: 0.96)
+            : NSColor(
+                calibratedRed: 0.11 + 0.12 * clampedProgress,
+                green: 0.13 + 0.19 * clampedProgress,
+                blue: 0.12,
+                alpha: 0.96
+            )
         fill.setFill()
         path.fill()
 
+        if !isEnabled, clampedProgress > 0.05 {
+            NSColor.escapeGreen.withAlphaComponent(0.18 + 0.18 * clampedProgress).setFill()
+            NSBezierPath(
+                roundedRect: NSRect(x: rect.minX, y: rect.minY, width: rect.width * clampedProgress, height: rect.height),
+                xRadius: 10,
+                yRadius: 10
+            ).fill()
+        }
+
         let stroke = isEnabled
             ? NSColor.white.withAlphaComponent(0.55)
-            : NSColor.escapeAmber.withAlphaComponent(0.75)
+            : NSColor.escapeAmber.blended(withFraction: clampedProgress, of: .escapeGreen)?.withAlphaComponent(0.82) ?? NSColor.escapeAmber
         stroke.setStroke()
         path.lineWidth = isEnabled ? 2 : 1.5
         path.stroke()
 
+        let fontSize: CGFloat = isEnabled ? 15 : 13
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 15, weight: .heavy),
+            .font: NSFont.systemFont(ofSize: fontSize, weight: .heavy),
             .foregroundColor: isEnabled ? NSColor(calibratedRed: 0.04, green: 0.08, blue: 0.06, alpha: 1) : NSColor.escapeAmber,
             .paragraphStyle: centeredParagraphStyle
         ]
         let textRect = rect.insetBy(dx: 12, dy: 0)
-        let textSize = title.size(withAttributes: attributes)
+        let measured = (title as NSString).boundingRect(
+            with: NSSize(width: textRect.width, height: CGFloat.greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            attributes: attributes
+        )
         title.draw(
             in: NSRect(
                 x: textRect.minX,
-                y: textRect.midY - textSize.height / 2,
+                y: textRect.midY - measured.height / 2,
                 width: textRect.width,
-                height: textSize.height + 2
+                height: measured.height + 2
             ),
             withAttributes: attributes
         )
@@ -729,6 +954,7 @@ private final class WritingEscapeActionButton: NSControl {
     private var centeredParagraphStyle: NSParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.alignment = .center
+        style.lineBreakMode = .byWordWrapping
         return style
     }
 }
