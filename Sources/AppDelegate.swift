@@ -404,6 +404,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var agentWindow: NSWindow?
     private var agentUtilityOverlayWindow: NSWindow?
+    private var detachedPreviewWindow: NSWindow?
+    private var detachedPreviewID: UUID?
     private var imageImportWindow: NSWindow?
     private var imageDropOverlayWindow: NSWindow?
     private var imageDropOverlayCloseWorkItem: DispatchWorkItem?
@@ -460,6 +462,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }()
     private var statusIconCancellable: AnyCancellable?
     private var agentPreviewCancellable: AnyCancellable?
+    private var detachedPreviewCancellable: AnyCancellable?
     private var stickySiteCancellable: AnyCancellable?
     private var menuBarIconVisibilityObserver: NSObjectProtocol?
     private var localMenuBarDragMonitor: Any?
@@ -472,6 +475,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         installStatusItemObservers()
         installStickyNoteSiteObserver()
         installAgentPreviewObserver()
+        installDetachedPreviewObserver()
         installMenuBarDragMonitors()
         startAppUpdateChecks()
 
@@ -505,6 +509,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             name: .showImageUploadPicker,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleExecuteQuickLauncherCommand),
+            name: .executeQuickLauncherCommand,
+            object: nil
+        )
 
         if !appState.hasCompletedSetup {
             showSetupWindow()
@@ -528,6 +538,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         removeMenuBarDragMonitors()
         draftFocusOverlayManager.dismiss()
         writingEscapeOverlayManager.dismiss()
+        detachedPreviewWindow?.close()
     }
 
     @MainActor
@@ -597,6 +608,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleShowImageUploadPicker() {
         selectImagesForUpload()
+    }
+
+    @objc private func handleExecuteQuickLauncherCommand(_ notification: Notification) {
+        guard let commandID = notification.userInfo?["commandID"] as? String else { return }
+        executeQuickLauncherCommand(commandID)
     }
 
     @objc private func handleStatusItemClick(_ sender: Any?) {
@@ -964,6 +980,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         addDisabledItem(statusMenuTitle, to: menu)
 
+        if let quickLauncherIndexStatusItem = quickLauncherIndexStatusMenuItem() {
+            menu.addItem(quickLauncherIndexStatusItem)
+        }
+
         menu.addItem(.separator())
         let openOverlayItem = actionItem("Quick Ask WordPress Agent", imageName: "text.bubble") { [weak self] in
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -1109,6 +1129,32 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             return appState.debugStatusMessage
         }
         return appState.shortcutStatusText
+    }
+
+    private func quickLauncherIndexStatusMenuItem() -> NSMenuItem? {
+        guard appState.isWordPressComSignedIn,
+              appState.selectedWordPressComSiteID != nil,
+              appState.isQuickLauncherIndexing else {
+            return nil
+        }
+
+        let item = actionItem(quickLauncherIndexStatusTitle, imageName: quickLauncherIndexStatusIconName) { [weak self] in
+            Task { await self?.appState.refreshQuickLauncherIndexForSelectedSiteIfNeeded(force: true) }
+        }
+        item.toolTip = "\(quickLauncherIndexStatusDetail) Click to refresh."
+        return item
+    }
+
+    private var quickLauncherIndexStatusTitle: String {
+        "QuickLauncher: Indexing"
+    }
+
+    private var quickLauncherIndexStatusDetail: String {
+        appState.quickLauncherStatusMessage ?? "Refreshing the selected site's local index."
+    }
+
+    private var quickLauncherIndexStatusIconName: String {
+        "arrow.triangle.2.circlepath"
     }
 
     private func currentAppConfigMenuItem() -> NSMenuItem? {
@@ -1311,11 +1357,116 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return String(trimmed.prefix(maxLength)) + "..."
     }
 
+    private func executeQuickLauncherCommand(_ commandID: String) {
+        if commandID.hasPrefix(QuickLauncherMenuCommandID.microphoneDevicePrefix) {
+            let deviceUID = String(commandID.dropFirst(QuickLauncherMenuCommandID.microphoneDevicePrefix.count))
+            guard appState.availableMicrophones.contains(where: { $0.uid == deviceUID }) else { return }
+            appState.selectedMicrophoneID = deviceUID
+            return
+        }
+
+        guard let command = QuickLauncherMenuCommandID(rawValue: commandID) else {
+            appState.errorMessage = "Unknown launcher command: \(commandID)"
+            return
+        }
+
+        switch command {
+        case .downloadUpdate:
+            if let releaseURL = appState.availableAppUpdate?.releaseURL {
+                NSWorkspace.shared.open(releaseURL)
+            }
+        case .wordpressComSettings:
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsAfterQuickLauncherDismiss()
+        case .accessibilitySettings:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.appState.showAccessibilityAlert()
+            }
+        case .quickAsk:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.showWordPressAgentUtilityOverlay()
+            }
+        case .addSticky:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.showNewStickyNote()
+            }
+        case .showStickies:
+            showSiteStickies()
+        case .hideStickies:
+            hideSiteStickies()
+        case .captureScreenshot:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.captureScreenshotForUpload()
+            }
+        case .uploadImages:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.selectImagesForUpload()
+            }
+        case .useDefaultSiteForCurrentApp:
+            appState.refreshLatestExternalAppSnapshot()
+            if let bundleIdentifier = appState.latestExternalAppSnapshot?.bundleIdentifier {
+                appState.removeWordPressComAppSiteOverride(bundleIdentifier: bundleIdentifier)
+            }
+        case .pinDefaultSiteToCurrentApp:
+            appState.refreshLatestExternalAppSnapshot()
+            appState.assignSelectedWordPressComSiteToLatestExternalApp()
+        case .removeCurrentAppSiteOverride:
+            appState.refreshLatestExternalAppSnapshot()
+            if let bundleIdentifier = appState.latestExternalAppSnapshot?.bundleIdentifier {
+                appState.removeWordPressComAppSiteOverride(bundleIdentifier: bundleIdentifier)
+            }
+        case .manageSitesInSettings:
+            appState.selectedSettingsTab = .wordpressCom
+            showSettingsAfterQuickLauncherDismiss()
+        case .toggleDictation:
+            appState.toggleRecording()
+        case .copyReply:
+            guard !appState.lastAgentResponse.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(appState.lastAgentResponse, forType: .string)
+        case .openAgent:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.showWordPressAgentWindow()
+            }
+        case .copyAgain:
+            guard !appState.lastTranscript.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(appState.lastTranscript, forType: .string)
+        case .microphoneSystemDefault:
+            appState.selectedMicrophoneID = "default"
+        case .draftFocus:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.showDraftFocusOverlay()
+            }
+        case .settings:
+            showSettingsAfterQuickLauncherDismiss()
+        case .refreshSites:
+            appState.selectedSettingsTab = .wordpressCom
+            appState.refreshWordPressComSitesFromUI()
+        case .refreshLauncherIndex:
+            Task { await appState.refreshQuickLauncherIndexForSelectedSiteIfNeeded(force: true) }
+        case .reindexLauncher:
+            Task { await appState.refreshQuickLauncherIndexForSelectedSiteIfNeeded(rebuild: true) }
+        case .indexingSettings:
+            appState.selectedSettingsTab = .indexing
+            showSettingsAfterQuickLauncherDismiss()
+        case .quit:
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
+    private func showSettingsAfterQuickLauncherDismiss() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.showSettingsWindow()
+        }
+    }
+
     private func restoreAccessoryActivationIfIdle() {
         if setupWindow == nil
             && settingsWindow == nil
             && agentWindow == nil
             && agentUtilityOverlayWindow == nil
+            && detachedPreviewWindow == nil
             && imageImportWindow == nil
             && !stickyNoteManager.hasVisibleWindows {
             NSApp.setActivationPolicy(.accessory)
@@ -1486,6 +1637,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onDismiss: { [weak self] in
                 self?.dismissWordPressAgentUtilityOverlay()
+            },
+            onHeightChange: { [weak self] height in
+                self?.resizeAgentUtilityOverlay(height: height)
             }
         )
             .environmentObject(appState)
@@ -1552,6 +1706,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         bringWindowToFront(window)
         focusEditableTextView(in: window)
         appState.setWordPressAgentUtilityOverlayFocused(window.isKeyWindow)
+    }
+
+    private func resizeAgentUtilityOverlay(height: CGFloat) {
+        guard let window = agentUtilityOverlayWindow else { return }
+        let clampedHeight = min(max(height, 96), 430)
+        guard abs(window.frame.height - clampedHeight) > 1 else { return }
+
+        var frame = window.frame
+        let topY = frame.maxY
+        frame.size.height = clampedHeight
+        frame.origin.y = topY - clampedHeight
+        window.setFrame(frame, display: true, animate: false)
     }
 
     private func dismissWordPressAgentUtilityOverlay(restoreActivationPolicy: Bool = true) {
@@ -1874,6 +2040,73 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     self?.expandAgentWindowForPreviewIfNeeded()
                 }
             }
+    }
+
+    private func installDetachedPreviewObserver() {
+        detachedPreviewCancellable = appState.$detachedWordPressAgentPreview
+            .receive(on: RunLoop.main)
+            .sink { [weak self] preview in
+                guard let self else { return }
+                if let preview {
+                    showDetachedPreviewWindow(preview)
+                } else {
+                    detachedPreviewWindow?.close()
+                    detachedPreviewWindow = nil
+                    detachedPreviewID = nil
+                    restoreAccessoryActivationIfIdle()
+                }
+            }
+    }
+
+    private func showDetachedPreviewWindow(_ preview: WordPressAgentPreview) {
+        NSApp.setActivationPolicy(.regular)
+        let isNewPreview = detachedPreviewID != preview.id
+        detachedPreviewID = preview.id
+
+        if let detachedPreviewWindow, detachedPreviewWindow.isVisible {
+            detachedPreviewWindow.title = preview.displayTitle
+            if isNewPreview {
+                bringWindowToFront(detachedPreviewWindow)
+            }
+            return
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 980, height: 720),
+            styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = preview.displayTitle
+        window.contentView = NSHostingView(
+            rootView: DetachedWordPressAgentPreviewWindowView()
+                .environmentObject(appState)
+        )
+        window.minSize = NSSize(width: 520, height: 420)
+        window.isReleasedWhenClosed = false
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+
+        detachedPreviewWindow = window
+
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.detachedPreviewWindow === window {
+                    self.detachedPreviewWindow = nil
+                    self.detachedPreviewID = nil
+                }
+                if self.appState.detachedWordPressAgentPreview != nil {
+                    self.appState.closeDetachedWordPressAgentPreview()
+                }
+                self.restoreAccessoryActivationIfIdle()
+            }
+        }
     }
 
     private func updateAgentWindowMovability(hasPreview: Bool? = nil) {
