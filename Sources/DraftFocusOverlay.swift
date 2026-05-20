@@ -1,5 +1,167 @@
 import AppKit
 
+private enum DraftFocusTheme: String, CaseIterable {
+    case typewriterStudy = "typewriter-study"
+    case rainWindow = "rain-window"
+    case mountainCabin = "mountain-cabin"
+
+    private static let storageKey = "draft_focus_theme"
+
+    static var stored: DraftFocusTheme {
+        guard let rawValue = UserDefaults.standard.string(forKey: storageKey),
+              let theme = DraftFocusTheme(rawValue: rawValue) else {
+            return .typewriterStudy
+        }
+        return theme
+    }
+
+    func persist() {
+        UserDefaults.standard.set(rawValue, forKey: Self.storageKey)
+    }
+
+    var displayName: String {
+        switch self {
+        case .typewriterStudy:
+            return "Typewriter Study"
+        case .rainWindow:
+            return "Rain Window"
+        case .mountainCabin:
+            return "Mountain Cabin"
+        }
+    }
+
+    var image: NSImage? {
+        DraftFocusThemeImageCache.shared.image(for: self)
+    }
+
+    var fallbackBackground: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.045, green: 0.052, blue: 0.043, alpha: 1)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.052, green: 0.065, blue: 0.074, alpha: 1)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.055, green: 0.064, blue: 0.047, alpha: 1)
+        }
+    }
+
+    var overlayTint: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.18, green: 0.13, blue: 0.07, alpha: 1)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.06, green: 0.10, blue: 0.13, alpha: 1)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.10, green: 0.13, blue: 0.075, alpha: 1)
+        }
+    }
+
+    var sceneDimAlpha: CGFloat {
+        switch self {
+        case .typewriterStudy:
+            return 0.24
+        case .rainWindow:
+            return 0.30
+        case .mountainCabin:
+            return 0.26
+        }
+    }
+
+    var inkColor: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.96, green: 0.92, blue: 0.80, alpha: 1)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.90, green: 0.94, blue: 0.96, alpha: 1)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.94, green: 0.91, blue: 0.80, alpha: 1)
+        }
+    }
+
+    var mutedInkColor: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.74, green: 0.68, blue: 0.55, alpha: 1)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.70, green: 0.76, blue: 0.78, alpha: 1)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.70, green: 0.72, blue: 0.60, alpha: 1)
+        }
+    }
+
+    var paperColor: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.965, green: 0.925, blue: 0.805, alpha: 0.985)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.955, green: 0.965, blue: 0.945, alpha: 0.985)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.970, green: 0.945, blue: 0.850, alpha: 0.985)
+        }
+    }
+
+    var paperInkColor: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.145, green: 0.105, blue: 0.070, alpha: 1)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.085, green: 0.115, blue: 0.125, alpha: 1)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.125, green: 0.110, blue: 0.075, alpha: 1)
+        }
+    }
+
+    var accentColor: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.83, green: 0.61, blue: 0.33, alpha: 1)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.48, green: 0.70, blue: 0.76, alpha: 1)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.56, green: 0.70, blue: 0.42, alpha: 1)
+        }
+    }
+
+    var buttonInkColor: NSColor {
+        switch self {
+        case .typewriterStudy:
+            return NSColor(calibratedRed: 0.090, green: 0.055, blue: 0.030, alpha: 1)
+        case .rainWindow:
+            return NSColor(calibratedRed: 0.050, green: 0.080, blue: 0.090, alpha: 1)
+        case .mountainCabin:
+            return NSColor(calibratedRed: 0.050, green: 0.075, blue: 0.035, alpha: 1)
+        }
+    }
+
+    var errorColor: NSColor {
+        NSColor(calibratedRed: 0.95, green: 0.43, blue: 0.34, alpha: 1)
+    }
+}
+
+private final class DraftFocusThemeImageCache {
+    static let shared = DraftFocusThemeImageCache()
+
+    private var images: [String: NSImage] = [:]
+
+    func image(for theme: DraftFocusTheme) -> NSImage? {
+        if let image = images[theme.rawValue] {
+            return image
+        }
+
+        guard let url = Bundle.main.url(
+            forResource: theme.rawValue,
+            withExtension: "jpg",
+            subdirectory: "DraftFocusThemes"
+        ),
+        let image = NSImage(contentsOf: url) else {
+            return nil
+        }
+
+        images[theme.rawValue] = image
+        return image
+    }
+}
+
 final class DraftOverlayPanel: NSPanel {
     private var allowsClose = false
 
@@ -175,6 +337,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
 
     private let closeButton = DraftFocusButton(title: "Close", style: .secondary)
     private let saveButton = DraftFocusButton(title: "Save and Close", style: .primary)
+    private let themePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let titleLabel = NSTextField(labelWithString: "Draft Focus")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let wordCountLabel = NSTextField(labelWithString: "0 words")
@@ -187,6 +350,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
 
     private var timer: Timer?
     private var isSaving = false
+    private var theme = DraftFocusTheme.stored
 
     override var isFlipped: Bool { true }
 
@@ -267,6 +431,17 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         onCloseRequested()
     }
 
+    @objc private func themePickerChanged() {
+        guard let rawValue = themePicker.selectedItem?.representedObject as? String,
+              let selectedTheme = DraftFocusTheme(rawValue: rawValue) else {
+            return
+        }
+
+        theme = selectedTheme
+        theme.persist()
+        applyTheme()
+    }
+
     private func setupView() {
         wantsLayer = true
         layer?.isOpaque = false
@@ -278,27 +453,22 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
             addSubview(label)
         }
 
-        titleLabel.font = .systemFont(ofSize: 34, weight: .bold)
-        titleLabel.textColor = .draftFocusInk
+        titleLabel.font = .monospacedSystemFont(ofSize: 33, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
 
         let site = siteName?.trimmingCharacters(in: .whitespacesAndNewlines)
         subtitleLabel.stringValue = site?.isEmpty == false ? "Artifact for \(site!)" : "Artifact"
-        subtitleLabel.font = .systemFont(ofSize: 14, weight: .medium)
-        subtitleLabel.textColor = .draftFocusMutedInk
+        subtitleLabel.font = .monospacedSystemFont(ofSize: 13, weight: .medium)
         subtitleLabel.lineBreakMode = .byTruncatingTail
 
         for metadataLabel in [wordCountLabel, elapsedLabel] {
             metadataLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
-            metadataLabel.textColor = .draftFocusMutedInk
         }
 
         saveErrorLabel.font = .systemFont(ofSize: 12, weight: .medium)
-        saveErrorLabel.textColor = .draftFocusRed
         saveErrorLabel.lineBreakMode = .byTruncatingTail
 
-        placeholderLabel.font = .systemFont(ofSize: 21, weight: .regular)
-        placeholderLabel.textColor = .draftFocusPaperInk.withAlphaComponent(0.32)
+        placeholderLabel.font = .monospacedSystemFont(ofSize: 20, weight: .regular)
 
         closeButton.target = self
         closeButton.action = #selector(closeButtonPressed)
@@ -307,6 +477,19 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         saveButton.isEnabled = false
         addSubview(closeButton)
         addSubview(saveButton)
+
+        themePicker.target = self
+        themePicker.action = #selector(themePickerChanged)
+        themePicker.controlSize = .small
+        themePicker.font = .systemFont(ofSize: 12, weight: .medium)
+        themePicker.bezelStyle = .rounded
+        themePicker.isBordered = true
+        for draftTheme in DraftFocusTheme.allCases {
+            themePicker.addItem(withTitle: draftTheme.displayName)
+            themePicker.item(withTitle: draftTheme.displayName)?.representedObject = draftTheme.rawValue
+        }
+        themePicker.selectItem(withTitle: theme.displayName)
+        addSubview(themePicker)
 
         editorChrome.addSubview(scrollView)
         editorChrome.addSubview(placeholderLabel)
@@ -319,9 +502,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
 
         textView.delegate = self
         textView.string = ""
-        textView.font = NSFont.systemFont(ofSize: 21, weight: .regular)
-        textView.textColor = .draftFocusPaperInk
-        textView.insertionPointColor = .draftFocusAccent
+        textView.font = NSFont.monospacedSystemFont(ofSize: 19, weight: .regular)
         textView.backgroundColor = .clear
         textView.drawsBackground = false
         textView.isRichText = false
@@ -337,7 +518,24 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: 860, height: CGFloat.greatestFiniteMagnitude)
 
+        applyTheme()
         updateMetadata()
+    }
+
+    private func applyTheme() {
+        titleLabel.textColor = theme.inkColor
+        subtitleLabel.textColor = theme.mutedInkColor
+        wordCountLabel.textColor = theme.mutedInkColor
+        elapsedLabel.textColor = theme.mutedInkColor
+        saveErrorLabel.textColor = theme.errorColor
+        placeholderLabel.textColor = theme.paperInkColor.withAlphaComponent(0.28)
+        textView.textColor = theme.paperInkColor
+        textView.insertionPointColor = theme.accentColor
+        editorChrome.theme = theme
+        closeButton.theme = theme
+        saveButton.theme = theme
+        needsDisplay = true
+        needsLayout = true
     }
 
     private func startTimer() {
@@ -369,6 +567,7 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
 
         closeButton.frame = NSRect(x: left, y: top, width: 96, height: 38)
         saveButton.frame = NSRect(x: left + contentWidth - 168, y: top, width: 168, height: 38)
+        themePicker.frame = NSRect(x: saveButton.frame.minX - 184, y: top + 4, width: 172, height: 30)
 
         titleLabel.frame = NSRect(x: left, y: top + 64, width: contentWidth, height: 42)
         subtitleLabel.frame = NSRect(x: left + 2, y: top + 108, width: contentWidth - 4, height: 22)
@@ -388,40 +587,75 @@ private final class DraftFocusView: NSView, NSTextViewDelegate {
     }
 
     private func drawBackground() {
-        NSColor.draftFocusBackground.setFill()
+        theme.fallbackBackground.setFill()
         bounds.fill()
 
-        NSColor.draftFocusAccent.withAlphaComponent(0.22).setStroke()
-        let rulePath = NSBezierPath()
-        for x in stride(from: CGFloat(0), through: bounds.width, by: 72) {
-            rulePath.move(to: NSPoint(x: x, y: 0))
-            rulePath.line(to: NSPoint(x: x - bounds.height * 0.32, y: bounds.height))
+        if let image = theme.image {
+            image.drawAspectFill(in: bounds)
         }
-        rulePath.lineWidth = 1
-        rulePath.stroke()
 
-        let quietBand = NSRect(x: 0, y: 0, width: bounds.width, height: max(160, bounds.height * 0.18))
-        NSColor(calibratedRed: 0.08, green: 0.11, blue: 0.105, alpha: 0.72).setFill()
-        quietBand.fill()
+        theme.overlayTint.withAlphaComponent(theme.sceneDimAlpha).setFill()
+        bounds.fill()
+
+        NSColor.black.withAlphaComponent(0.18).setFill()
+        NSRect(x: 0, y: 0, width: bounds.width, height: max(118, bounds.height * 0.16)).fill()
+        NSRect(x: 0, y: max(0, bounds.height - 150), width: bounds.width, height: 150).fill()
+
+        NSGradient(colors: [
+            NSColor.black.withAlphaComponent(0.34),
+            NSColor.black.withAlphaComponent(0.02),
+            NSColor.black.withAlphaComponent(0.42)
+        ])?.draw(in: bounds, angle: 0)
+
+        NSColor.white.withAlphaComponent(0.035).setStroke()
+        let glintPath = NSBezierPath()
+        for x in stride(from: CGFloat(-bounds.height), through: bounds.width, by: 96) {
+            glintPath.move(to: NSPoint(x: x, y: 0))
+            glintPath.line(to: NSPoint(x: x + bounds.height * 0.26, y: bounds.height))
+        }
+        glintPath.lineWidth = 1
+        glintPath.stroke()
     }
 }
 
 private final class DraftFocusEditorChrome: NSView {
+    var theme: DraftFocusTheme = .typewriterStudy {
+        didSet { needsDisplay = true }
+    }
+
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        let path = NSBezierPath(roundedRect: bounds, xRadius: 8, yRadius: 8)
-        NSColor.draftFocusPaper.setFill()
+        let pageRect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let path = NSBezierPath(roundedRect: pageRect, xRadius: 7, yRadius: 7)
+
+        NSGraphicsContext.current?.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowColor = NSColor.black.withAlphaComponent(0.46)
+        shadow.shadowBlurRadius = 34
+        shadow.shadowOffset = NSSize(width: 0, height: -18)
+        shadow.set()
+        theme.paperColor.setFill()
+        path.fill()
+        NSGraphicsContext.current?.restoreGraphicsState()
+
+        theme.paperColor.setFill()
         path.fill()
 
-        NSColor.draftFocusAccent.withAlphaComponent(0.34).setStroke()
+        theme.accentColor.withAlphaComponent(0.30).setStroke()
         path.lineWidth = 1.5
         path.stroke()
 
-        NSColor.black.withAlphaComponent(0.04).setFill()
-        for y in stride(from: CGFloat(74), through: bounds.height, by: 34) {
-            NSRect(x: 36, y: y, width: bounds.width - 72, height: 1).fill()
+        theme.paperInkColor.withAlphaComponent(0.050).setFill()
+        for y in stride(from: CGFloat(78), through: bounds.height - 26, by: 34) {
+            NSRect(x: 44, y: y, width: bounds.width - 88, height: 1).fill()
         }
+
+        theme.accentColor.withAlphaComponent(0.11).setFill()
+        NSRect(x: 72, y: 34, width: 1, height: max(0, bounds.height - 68)).fill()
+
+        NSColor.white.withAlphaComponent(0.12).setFill()
+        NSRect(x: pageRect.minX + 1, y: pageRect.minY + 1, width: pageRect.width - 2, height: 34).fill()
     }
 }
 
@@ -432,6 +666,9 @@ private final class DraftFocusButton: NSControl {
     }
 
     var title: String {
+        didSet { needsDisplay = true }
+    }
+    var theme: DraftFocusTheme = .typewriterStudy {
         didSet { needsDisplay = true }
     }
 
@@ -462,21 +699,21 @@ private final class DraftFocusButton: NSControl {
 
         switch (style, isEnabled) {
         case (.primary, true):
-            fill = .draftFocusAccent
+            fill = theme.accentColor
             stroke = NSColor.white.withAlphaComponent(0.35)
-            textColor = .draftFocusButtonInk
+            textColor = theme.buttonInkColor
         case (.primary, false):
-            fill = NSColor.draftFocusAccent.withAlphaComponent(0.26)
-            stroke = NSColor.draftFocusAccent.withAlphaComponent(0.28)
-            textColor = NSColor.draftFocusInk.withAlphaComponent(0.44)
+            fill = theme.accentColor.withAlphaComponent(0.24)
+            stroke = theme.accentColor.withAlphaComponent(0.28)
+            textColor = theme.inkColor.withAlphaComponent(0.45)
         case (.secondary, true):
-            fill = NSColor.white.withAlphaComponent(0.08)
+            fill = NSColor.black.withAlphaComponent(0.18)
             stroke = NSColor.white.withAlphaComponent(0.22)
-            textColor = .draftFocusInk
+            textColor = theme.inkColor
         case (.secondary, false):
-            fill = NSColor.white.withAlphaComponent(0.05)
+            fill = NSColor.black.withAlphaComponent(0.10)
             stroke = NSColor.white.withAlphaComponent(0.12)
-            textColor = NSColor.draftFocusInk.withAlphaComponent(0.46)
+            textColor = theme.inkColor.withAlphaComponent(0.46)
         }
 
         fill.setFill()
@@ -522,13 +759,19 @@ private final class DraftFocusBackdropView: NSView {
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.draftFocusBackground.setFill()
+        let theme = DraftFocusTheme.stored
+        theme.fallbackBackground.setFill()
+        bounds.fill()
+        if let image = theme.image {
+            image.drawAspectFill(in: bounds)
+        }
+        NSColor.black.withAlphaComponent(0.58).setFill()
         bounds.fill()
 
         let text = "Draft Focus is active on another display"
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 18, weight: .medium),
-            .foregroundColor: NSColor.draftFocusInk.withAlphaComponent(0.52)
+            .foregroundColor: theme.inkColor.withAlphaComponent(0.72)
         ]
         let size = text.size(withAttributes: attributes)
         text.draw(
@@ -566,13 +809,39 @@ enum DraftArtifactText {
     }
 }
 
-private extension NSColor {
-    static let draftFocusBackground = NSColor(calibratedRed: 0.045, green: 0.060, blue: 0.055, alpha: 0.985)
-    static let draftFocusInk = NSColor(calibratedRed: 0.94, green: 0.93, blue: 0.84, alpha: 1)
-    static let draftFocusMutedInk = NSColor(calibratedRed: 0.66, green: 0.70, blue: 0.62, alpha: 1)
-    static let draftFocusPaper = NSColor(calibratedRed: 0.985, green: 0.975, blue: 0.93, alpha: 0.99)
-    static let draftFocusPaperInk = NSColor(calibratedRed: 0.12, green: 0.115, blue: 0.095, alpha: 1)
-    static let draftFocusAccent = NSColor(calibratedRed: 0.55, green: 0.84, blue: 0.62, alpha: 1)
-    static let draftFocusButtonInk = NSColor(calibratedRed: 0.035, green: 0.075, blue: 0.050, alpha: 1)
-    static let draftFocusRed = NSColor(calibratedRed: 0.93, green: 0.38, blue: 0.32, alpha: 1)
+private extension NSImage {
+    func drawAspectFill(in targetRect: NSRect) {
+        guard size.width > 0, size.height > 0, targetRect.width > 0, targetRect.height > 0 else { return }
+
+        let sourceAspect = size.width / size.height
+        let targetAspect = targetRect.width / targetRect.height
+        let sourceRect: NSRect
+
+        if sourceAspect > targetAspect {
+            let width = size.height * targetAspect
+            sourceRect = NSRect(
+                x: (size.width - width) / 2,
+                y: 0,
+                width: width,
+                height: size.height
+            )
+        } else {
+            let height = size.width / targetAspect
+            sourceRect = NSRect(
+                x: 0,
+                y: (size.height - height) / 2,
+                width: size.width,
+                height: height
+            )
+        }
+
+        draw(
+            in: targetRect,
+            from: sourceRect,
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high]
+        )
+    }
 }

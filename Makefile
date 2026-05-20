@@ -26,12 +26,13 @@ ICON_ICNS = Resources/AppIcon.icns
 WPCOM_LOGO = Resources/WPCOM-Blueberry-Pill-Logo.svg
 MENU_BAR_LOGO = Resources/MenuBarWordPressLogo.svg
 FONT_RESOURCES = $(shell find Resources/Fonts -type f 2>/dev/null | LC_ALL=C sort)
+DRAFT_FOCUS_THEME_RESOURCES = $(shell find Resources/DraftFocusThemes -type f 2>/dev/null | LC_ALL=C sort)
 
 .PHONY: all clean run icon dmg codesign-dmg notarize-app notarize-dmg zip release
 
 all: $(APP_EXECUTABLE_TARGET)
 
-$(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS) $(ICON_SOURCE) $(WPCOM_LOGO) $(MENU_BAR_LOGO) $(FONT_RESOURCES)
+$(APP_EXECUTABLE_TARGET): $(SOURCES) Info.plist $(ICON_ICNS) $(ICON_SOURCE) $(WPCOM_LOGO) $(MENU_BAR_LOGO) $(FONT_RESOURCES) $(DRAFT_FOCUS_THEME_RESOURCES)
 	@mkdir -p "$(MACOS_DIR)" "$(RESOURCES)"
 ifeq ($(ARCH),universal)
 	swiftc \
@@ -69,6 +70,10 @@ endif
 	@cp $(MENU_BAR_LOGO) "$(RESOURCES)/"
 	@rm -rf "$(RESOURCES)/Fonts"
 	@cp -R Resources/Fonts "$(RESOURCES)/Fonts"
+	@if [ -d Resources/DraftFocusThemes ]; then \
+		rm -rf "$(RESOURCES)/DraftFocusThemes"; \
+		cp -R Resources/DraftFocusThemes "$(RESOURCES)/DraftFocusThemes"; \
+	fi
 	@secret="$${WPCOM_OAUTH_CLIENT_SECRET:-}"; \
 		if [ -n "$(WPCOM_OAUTH_CLIENT_SECRET_FILE)" ]; then \
 			secret="$$(cat "$(WPCOM_OAUTH_CLIENT_SECRET_FILE)")"; \
