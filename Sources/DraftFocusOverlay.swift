@@ -171,6 +171,154 @@ private final class DraftFocusThemeImageCache {
     }
 }
 
+private final class DraftFocusTypewriterSoundPlayer {
+    static let shared = DraftFocusTypewriterSoundPlayer()
+
+    private enum SoundKind {
+        case key
+        case enter
+
+        var gain: Float {
+            switch self {
+            case .key:
+                return 0.28
+            case .enter:
+                return 0.24
+            }
+        }
+
+        var maxPlaybackDuration: TimeInterval {
+            switch self {
+            case .key:
+                return 0.18
+            case .enter:
+                return 0.24
+            }
+        }
+    }
+
+    private final class SoundSlot {
+        let sound: NSSound
+        var playID = 0
+
+        init(sound: NSSound) {
+            self.sound = sound
+        }
+    }
+
+    private struct SoundPool {
+        var slots: [SoundSlot]
+        var nextIndex = 0
+
+        mutating func play(kind: SoundKind, volume: Float) {
+            guard !slots.isEmpty else { return }
+
+            let slot = slots[nextIndex]
+            nextIndex = (nextIndex + 1) % slots.count
+            slot.playID += 1
+            let playID = slot.playID
+            let sound = slot.sound
+            sound.stop()
+            sound.currentTime = 0
+            sound.volume = volume
+            sound.play()
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + kind.maxPlaybackDuration) { [weak slot] in
+                guard let slot, slot.playID == playID else { return }
+                slot.sound.stop()
+                slot.sound.currentTime = 0
+            }
+        }
+    }
+
+    private static let alertSoundsEnabledStorageKey = "alert_sounds_enabled"
+    private static let soundVolumeStorageKey = "sound_volume"
+    private static let nonTypingKeyCodes: Set<UInt16> = [
+        53, 96, 97, 98, 99, 100, 101, 103, 105, 107, 109, 111, 113, 114,
+        115, 116, 118, 119, 120, 121, 122, 123, 124, 125, 126
+    ]
+
+    private var keyPool: SoundPool
+    private var enterPool: SoundPool
+
+    private init() {
+        keyPool = SoundPool(slots: Self.makePool(resourceName: "typewriter-key", count: 10))
+        enterPool = SoundPool(slots: Self.makePool(resourceName: "typewriter-enter", count: 4))
+    }
+
+    func play(for event: NSEvent) {
+        guard let kind = Self.kind(for: event),
+              let volume = resolvedVolume(for: kind) else {
+            return
+        }
+
+        switch kind {
+        case .key:
+            keyPool.play(kind: kind, volume: volume)
+        case .enter:
+            enterPool.play(kind: kind, volume: volume)
+        }
+    }
+
+    private func resolvedVolume(for kind: SoundKind) -> Float? {
+        let defaults = UserDefaults.standard
+        if defaults.object(forKey: Self.alertSoundsEnabledStorageKey) != nil,
+           !defaults.bool(forKey: Self.alertSoundsEnabledStorageKey) {
+            return nil
+        }
+
+        let appVolume: Float
+        if defaults.object(forKey: Self.soundVolumeStorageKey) != nil {
+            appVolume = defaults.float(forKey: Self.soundVolumeStorageKey)
+        } else {
+            appVolume = 1
+        }
+
+        let volume = max(0, min(1, appVolume)) * kind.gain
+        return volume > 0 ? volume : nil
+    }
+
+    private static func kind(for event: NSEvent) -> SoundKind? {
+        guard event.type == .keyDown else { return nil }
+
+        let shortcutModifiers = event.modifierFlags.intersection([.command, .control])
+        guard shortcutModifiers.isEmpty else { return nil }
+
+        switch event.keyCode {
+        case 36, 76:
+            return .enter
+        case 51, 117:
+            return .key
+        default:
+            break
+        }
+
+        guard !nonTypingKeyCodes.contains(event.keyCode),
+              let characters = event.charactersIgnoringModifiers,
+              !characters.isEmpty else {
+            return nil
+        }
+
+        return characters.unicodeScalars.contains { scalar in
+            !CharacterSet.controlCharacters.contains(scalar)
+        } ? .key : nil
+    }
+
+    private static func makePool(resourceName: String, count: Int) -> [SoundSlot] {
+        (0..<count).compactMap { index -> SoundSlot? in
+            guard let url = Bundle.main.url(
+                forResource: resourceName,
+                withExtension: "wav",
+                subdirectory: "DraftFocusSounds"
+            ),
+            let sound = NSSound(contentsOf: url, byReference: false) else {
+                return nil
+            }
+            return SoundSlot(sound: sound)
+        }
+    }
+}
+
 final class DraftOverlayPanel: NSPanel {
     private var allowsClose = false
 
@@ -757,6 +905,11 @@ private final class DraftFocusTextView: NSTextView {
     }
 
     override var isFlipped: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        DraftFocusTypewriterSoundPlayer.shared.play(for: event)
+        super.keyDown(with: event)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         drawPaperLines(in: dirtyRect)
