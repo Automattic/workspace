@@ -19,6 +19,7 @@ Use this skill for release, packaging, and build-operation work in this reposito
 - Default command: `make`
 - Default output: `build/WP Workspace Dev.app`
 - Default bundle identifier: `com.automattic.wpworkspace.dev`
+- Current builds link SQLite with `-lsqlite3` for the QuickLauncher/Workspace cache.
 - Use `make run` only when the user wants to launch the app locally.
 
 ## OAuth Secret Handling
@@ -41,6 +42,7 @@ Use this skill for release, packaging, and build-operation work in this reposito
 ## CI and Notarization
 
 - `Makefile` owns direct `swiftc` compilation, resource copying, secret injection, code signing, zip, DMG, and notarization targets.
+- If build failures mention SQLite symbols, verify the `LDFLAGS = -lsqlite3` path in `Makefile` is still applied to all architecture builds.
 - `Tools/notarize.sh` handles notarization and stapling.
 - `.github/workflows/release.yml` is intentionally disabled behind manual dispatch.
 - `.buildkite/pipeline.yml` runs build, signing, notarization, and artifact collection on the mac queue.
@@ -50,6 +52,8 @@ Use this skill for release, packaging, and build-operation work in this reposito
 - Transcription endpoint script: `Tools/wpcom-transcribe.sh`
 - It requires a bearer token, site, and audio file.
 - It posts multipart audio to `/wpcom/v2/sites/{site}/ai/transcription`.
+- Keep this path dependency-free: shell plus `curl`, with `--verbose`, `--proxy`, and `--envelope` available for debugging.
+- Use `--intent command --selected-text "..."` when testing selected-text transformation.
 
 ## Verification
 

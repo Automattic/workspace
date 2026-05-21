@@ -20,7 +20,7 @@ Use this skill when creating or revising product-development docs for this repos
    - WordPress Workspace is a site-first Mac app.
    - The selected WordPress.com site is the workspace context.
    - WordPress.com owns account access, site permissions, AI execution, Agent capabilities, media storage, guidelines, and skills.
-   - The Mac app owns native entry points, local capture, permissions, shortcuts, upload preparation, and routing into the selected site.
+   - The Mac app owns native entry points, local capture, permissions, shortcuts, upload preparation, QuickLauncher indexing, and routing into the selected site.
 4. Preserve non-goals unless the user explicitly changes them.
    - No local WordPress.com AI provider setup.
    - No local model picker.
@@ -35,4 +35,6 @@ Use this skill when creating or revising product-development docs for this repos
 
 - Call out the macOS support mismatch if the doc mentions compatibility: public launch copy says macOS 11 or later, while this repo's `Info.plist` currently requires 13.0.
 - Make active site routing explicit for any feature that sends text, audio, images, screenshots, or Agent messages.
+- When documenting QuickLauncher, mention `@` activation in Quick Ask, `Workspace.sqlite`, local app commands, site-scoped content indexing, incremental refresh, full reindex, and detached preview behavior.
+- When documenting preview behavior, distinguish requested URL from effective/private preview URL, keep nonce details out of user-facing UI, and cover preview/edit mode switching.
 - Do not document unverified privacy or retention promises as external commitments.
