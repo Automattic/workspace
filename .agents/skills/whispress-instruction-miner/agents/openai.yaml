@@ -1,0 +1,6 @@
+interface:
+  display_name: "Whispress Instruction Miner"
+  short_description: "Extract durable repo guidance"
+  default_prompt: "Use $whispress-instruction-miner to find repeated WordPress Workspace instructions worth preserving."
+policy:
+  allow_implicit_invocation: true

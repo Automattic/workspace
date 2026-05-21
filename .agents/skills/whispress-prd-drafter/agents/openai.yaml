@@ -1,0 +1,6 @@
+interface:
+  display_name: "Whispress PRD Drafter"
+  short_description: "Draft site-first WordPress Workspace PRDs"
+  default_prompt: "Use $whispress-prd-drafter to update the WordPress Workspace PRD for this feature."
+policy:
+  allow_implicit_invocation: true

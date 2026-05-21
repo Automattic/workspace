@@ -54,6 +54,18 @@ WordPress Workspace is a fork of
 dictation app. The fork reworks the app into a WordPress.com site workspace for
 Agent chat, screenshots, uploads, selected text, and voice input.
 
+## Development Docs
+
+- [docs/prd.md](docs/prd.md) is the living product and engineering guide for
+  future WordPress Workspace development.
+- [.agents/skills](.agents/skills) contains repo-scoped Codex skills for PRD
+  drafting, doc consistency checks, release guidance, and instruction mining.
+
+Codex discovers repository skills from `.agents/skills` in the current working
+directory and parent directories up to the repository root. See the
+[Codex Agent Skills documentation](https://developers.openai.com/codex/skills)
+for the current discovery rules.
+
 ## Build From Source
 
 ```sh
