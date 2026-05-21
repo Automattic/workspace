@@ -116,6 +116,7 @@ struct WordPressAgentPreview: Identifiable, Equatable {
     let siteID: Int?
     let isLoading: Bool
     let requiresAuthenticationHint: Bool
+    let preferredViewMode: WordPressAgentPreviewViewMode?
 
     init(
         id: UUID = UUID(),
@@ -125,7 +126,8 @@ struct WordPressAgentPreview: Identifiable, Equatable {
         pageTitle: String? = nil,
         siteID: Int? = nil,
         isLoading: Bool = false,
-        requiresAuthenticationHint: Bool = false
+        requiresAuthenticationHint: Bool = false,
+        preferredViewMode: WordPressAgentPreviewViewMode? = nil
     ) {
         self.id = id
         self.url = url
@@ -133,6 +135,7 @@ struct WordPressAgentPreview: Identifiable, Equatable {
         self.siteID = siteID
         self.isLoading = isLoading
         self.requiresAuthenticationHint = requiresAuthenticationHint
+        self.preferredViewMode = preferredViewMode
         let trimmedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.title = trimmedTitle?.isEmpty == false ? trimmedTitle : nil
         let trimmedPageTitle = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -168,7 +171,8 @@ struct WordPressAgentPreview: Identifiable, Equatable {
             pageTitle: resolvedPageTitle,
             siteID: siteID,
             isLoading: isLoading,
-            requiresAuthenticationHint: requiresAuthenticationHint
+            requiresAuthenticationHint: requiresAuthenticationHint,
+            preferredViewMode: preferredViewMode
         )
     }
 }
@@ -272,6 +276,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
     case keyBindings
     case transcription
     case wordpressCom
+    case indexing
     case network
     case wordpressAgent
 
@@ -283,6 +288,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .keyBindings: return "Key Bindings"
         case .transcription: return "Transcription"
         case .wordpressCom: return "WordPress.com"
+        case .indexing: return "Indexing"
         case .network: return "Network"
         case .wordpressAgent: return "WordPress Agent"
         }
@@ -294,6 +300,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         case .keyBindings: return "keyboard"
         case .transcription: return "waveform"
         case .wordpressCom: return "person.crop.circle.badge.checkmark"
+        case .indexing: return "magnifyingglass.circle"
         case .network: return "network"
         case .wordpressAgent: return "sparkles"
         }
@@ -417,11 +424,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let selectedWPCOMSiteIDStorageKey = "selected_wpcom_site_id"
     private let wpcomAppSiteOverridesStorageKey = "wpcom_app_site_overrides"
     private let wordpressAgentStarredSiteIDsStorageKey = "wordpress_agent_starred_site_ids"
-    private let wordpressComSitesCacheStorageKey = "wordpress_com_sites_cache"
-    private let wordpressComUserCacheStorageKey = "wordpress_com_user_cache"
-    private let wordpressAgentConversationsCacheStorageKey = "wordpress_agent_conversations_cache"
     private let lastNotifiedAppUpdateVersionStorageKey = "last_notified_app_update_version"
     private let networkRoutingSettingsStorageKey = "network_routing_settings"
+    private let quickLauncherEnabledStorageKey = "quick_launcher_enabled"
+    private let quickLauncherIncrementalIndexingStorageKey = "quick_launcher_incremental_indexing"
     private let wordpressAgentConversationPageSize = 20
     private let wordpressAgentConversationsCacheDebounceNanoseconds: UInt64 = 350_000_000
     private static let wordpressAgentFrontendAbilities: [WPCOMAgentFrontendAbility] = [.preview]
@@ -545,6 +551,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published private(set) var hasLoadedWordPressAgentConversations = false
     @Published private(set) var wordpressAgentHistoryStatusMessage: String?
     @Published private(set) var wordpressAgentPreview: WordPressAgentPreview?
+    @Published private(set) var detachedWordPressAgentPreview: WordPressAgentPreview?
     private var wordpressAgentPreviewsByConversationID: [String: WordPressAgentPreview] = [:]
     @Published private(set) var isWordPressAgentWindowFocused = false
     @Published private(set) var isWordPressAgentUtilityOverlayFocused = false
@@ -621,7 +628,13 @@ final class AppState: ObservableObject, @unchecked Sendable {
             UserDefaults.standard.set(selectedMicrophoneID, forKey: selectedMicrophoneStorageKey)
         }
     }
-    @Published var availableMicrophones: [AudioDevice] = []
+    @Published var availableMicrophones: [AudioDevice] = [] {
+        didSet {
+            guard quickLauncherEnabled else { return }
+            replaceQuickLauncherMenuCommands()
+            updateQuickLauncherSearch(quickLauncherSearchQuery)
+        }
+    }
     @Published private(set) var availableSpeechVoices: [SpeechVoiceOption] = []
     @Published private(set) var isWordPressComSignedIn = false
     @Published private(set) var isSigningInToWordPressCom = false
@@ -629,6 +642,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
     @Published private(set) var wordpressComSites: [WPCOMSite] = [] {
         didSet {
             persistCachedWordPressComSites()
+            guard quickLauncherEnabled else { return }
+            quickLauncherIndexStore.replaceSites(wordpressComSites)
+            replaceQuickLauncherMenuCommands()
+            seedQuickLauncherIndexForSelectedSite()
+            refreshQuickLauncherIndexStats()
+            updateQuickLauncherSearch(quickLauncherSearchQuery)
         }
     }
     @Published private(set) var wordpressComUser: WPCOMUser? {
@@ -637,6 +656,22 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
     }
     @Published private(set) var transcribeSkill: WPCOMGuideline?
+    @Published private(set) var quickLauncherResults: [QuickLauncherEntity] = []
+    @Published private(set) var isQuickLauncherIndexing = false
+    @Published private(set) var quickLauncherStatusMessage: String?
+    @Published private(set) var quickLauncherIndexedSiteIDs: Set<Int> = []
+    @Published private(set) var quickLauncherIndexStats: QuickLauncherIndexStats = .empty
+    @Published var quickLauncherEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(quickLauncherEnabled, forKey: quickLauncherEnabledStorageKey)
+            handleQuickLauncherEnabledChange()
+        }
+    }
+    @Published var quickLauncherUsesIncrementalIndexing: Bool {
+        didSet {
+            UserDefaults.standard.set(quickLauncherUsesIncrementalIndexing, forKey: quickLauncherIncrementalIndexingStorageKey)
+        }
+    }
     @Published private(set) var starredWordPressAgentSiteIDs: [Int] = [] {
         didSet {
             persistWordPressAgentStarredSiteIDs()
@@ -650,15 +685,36 @@ final class AppState: ObservableObject, @unchecked Sendable {
             } else {
                 UserDefaults.standard.removeObject(forKey: selectedWPCOMSiteIDStorageKey)
             }
-            Task { await discoverTranscribeSkillForSelectedSite() }
+            cancelQuickLauncherIndexTasks(except: selectedWordPressComSiteID)
+            if quickLauncherEnabled {
+                replaceQuickLauncherMenuCommands()
+                seedQuickLauncherIndexForSelectedSite()
+                refreshQuickLauncherIndexStats()
+                updateQuickLauncherSearch(quickLauncherSearchQuery)
+            }
+            Task {
+                await discoverTranscribeSkillForSelectedSite()
+                if quickLauncherEnabled {
+                    await refreshQuickLauncherIndexForSelectedSiteIfNeeded()
+                }
+            }
         }
     }
     @Published var wordpressComAppSiteOverrides: [WPCOMAppSiteOverride] {
         didSet {
             persistWordPressComAppSiteOverrides()
+            guard quickLauncherEnabled else { return }
+            replaceQuickLauncherMenuCommands()
+            updateQuickLauncherSearch(quickLauncherSearchQuery)
         }
     }
-    @Published private(set) var latestExternalAppSnapshot: AppSelectionSnapshot?
+    @Published private(set) var latestExternalAppSnapshot: AppSelectionSnapshot? {
+        didSet {
+            guard quickLauncherEnabled else { return }
+            replaceQuickLauncherMenuCommands()
+            updateQuickLauncherSearch(quickLauncherSearchQuery)
+        }
+    }
 
     var sortedWordPressAgentConversations: [WordPressAgentConversation] {
         wordpressAgentConversations.sorted { lhs, rhs in
@@ -719,6 +775,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
     let overlayManager = RecordingOverlayManager()
     private let wpcomClient = WPCOMClient()
     private let elevenLabsClient = ElevenLabsClient()
+    private let quickLauncherIndexStore: QuickLauncherIndexStore
     private var accessibilityTimer: Timer?
     private var audioLevelCancellable: AnyCancellable?
     private var debugOverlayTimer: Timer?
@@ -745,6 +802,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private var pendingOverlayDismissToken: UUID?
     private var pendingWordPressAgentConversationsCacheTask: Task<Void, Never>?
     private var appUpdateCheckTask: Task<Void, Never>?
+    private var quickLauncherIndexTasks: [Int: Task<Void, Never>] = [:]
+    private var quickLauncherPrepareRefreshTask: Task<Void, Never>?
+    private var quickLauncherSearchTask: Task<Void, Never>?
+    private var quickLauncherSearchGeneration = 0
+    private var quickLauncherSearchQuery = ""
     private var wordpressAgentConversationsCacheGeneration = 0
     private var shouldPersistWordPressAgentConversationsCache = true
     private var shouldMonitorHotkeys = false
@@ -756,6 +818,10 @@ final class AppState: ObservableObject, @unchecked Sendable {
     private let speechSynthesizer = AVSpeechSynthesizer()
     private var elevenLabsSpeechTask: Task<Void, Never>?
     private var elevenLabsAudioPlayer: AVAudioPlayer?
+
+    var workspaceCacheStore: QuickLauncherIndexStore {
+        quickLauncherIndexStore
+    }
 
     init() {
         UserDefaults.standard.removeObject(forKey: "force_http2_transcription")
@@ -825,19 +891,29 @@ final class AppState: ObservableObject, @unchecked Sendable {
             forKey: wordpressAgentStarredSiteIDsStorageKey
         )
         let networkRoutingSettings = Self.loadNetworkRoutingSettings(forKey: networkRoutingSettingsStorageKey)
+        let quickLauncherEnabled = UserDefaults.standard.object(forKey: quickLauncherEnabledStorageKey) != nil
+            ? UserDefaults.standard.bool(forKey: quickLauncherEnabledStorageKey)
+            : true
+        let quickLauncherUsesIncrementalIndexing = UserDefaults.standard.object(forKey: quickLauncherIncrementalIndexingStorageKey) != nil
+            ? UserDefaults.standard.bool(forKey: quickLauncherIncrementalIndexingStorageKey)
+            : true
 
-        self.contextService = AppContextService()
+        let quickLauncherIndexStore = QuickLauncherIndexStore()
         let isInitiallyWordPressComSignedIn = wpcomClient.isSignedIn
         let cachedWordPressComSites = isInitiallyWordPressComSignedIn
-            ? Self.loadCachedWordPressComSites(forKey: wordpressComSitesCacheStorageKey)
+            ? quickLauncherIndexStore.cachedWordPressComSites() ?? []
             : []
         let cachedWordPressComUser = isInitiallyWordPressComSignedIn
-            ? Self.loadCachedWordPressComUser(forKey: wordpressComUserCacheStorageKey)
+            ? quickLauncherIndexStore.cachedWordPressComUser()
             : nil
         let cachedWordPressAgentConversations = isInitiallyWordPressComSignedIn
-            ? Self.loadCachedWordPressAgentConversations(forKey: wordpressAgentConversationsCacheStorageKey)
+            ? Self.deduplicatedWordPressAgentConversations(
+                quickLauncherIndexStore.cachedWordPressAgentConversations() ?? []
+            )
             : []
         let cachedRemoteConversationCount = cachedWordPressAgentConversations.filter { $0.remoteChatID != nil }.count
+        self.contextService = AppContextService()
+        self.quickLauncherIndexStore = quickLauncherIndexStore
         self.hasCompletedSetup = hasCompletedSetup
         self.holdShortcut = shortcuts.hold
         self.toggleShortcut = shortcuts.toggle
@@ -862,6 +938,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         self.hasAccessibility = initialAccessibility
         self.launchAtLogin = SMAppService.mainApp.status == .enabled
         self.networkRoutingSettings = networkRoutingSettings
+        self.quickLauncherEnabled = quickLauncherEnabled
+        self.quickLauncherUsesIncrementalIndexing = quickLauncherUsesIncrementalIndexing
         self.selectedMicrophoneID = selectedMicrophoneID
         self.selectedWordPressComSiteID = storedSiteID
         self.wordpressComAppSiteOverrides = storedAppSiteOverrides
@@ -878,9 +956,27 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 / wordpressAgentConversationPageSize) + 1
         )
         self.isWordPressComSignedIn = isInitiallyWordPressComSignedIn
+        if isInitiallyWordPressComSignedIn {
+            quickLauncherIndexStore.replaceCachedWordPressComSites(cachedWordPressComSites)
+            quickLauncherIndexStore.replaceCachedWordPressComUser(cachedWordPressComUser)
+        }
         AppNetworkSessionProvider.shared.update(settings: networkRoutingSettings)
+        if quickLauncherEnabled {
+            quickLauncherIndexStore.removePrivacyExcludedEntities()
+            quickLauncherIndexStore.replaceSites(cachedWordPressComSites)
+            seedQuickLauncherIndexForSelectedSite()
+            quickLauncherIndexedSiteIDs = quickLauncherIndexStore.indexedSiteIDs()
+            quickLauncherIndexStats = quickLauncherIndexStore.stats(siteID: selectedWordPressComSiteID)
+        }
 
         refreshAvailableMicrophones()
+        if quickLauncherEnabled {
+            replaceQuickLauncherMenuCommands()
+            quickLauncherResults = quickLauncherIndexStore.search(
+                query: quickLauncherSearchQuery,
+                activeSiteID: selectedWordPressComSiteID
+            )
+        }
         refreshAvailableSpeechVoices()
         installAudioDeviceObservers()
         installAppActivationObserver()
@@ -923,6 +1019,9 @@ final class AppState: ObservableObject, @unchecked Sendable {
         elevenLabsSpeechTask?.cancel()
         pendingWordPressAgentConversationsCacheTask?.cancel()
         appUpdateCheckTask?.cancel()
+        quickLauncherIndexTasks.values.forEach { $0.cancel() }
+        quickLauncherPrepareRefreshTask?.cancel()
+        quickLauncherSearchTask?.cancel()
         removeAudioDeviceObservers()
         removeAppActivationObserver()
     }
@@ -1019,8 +1118,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return
         }
 
-        let snapshot = contextService.collectSelectionSnapshot(for: app)
-        guard snapshot.bundleIdentifier != nil else { return }
+        let snapshot = contextService.collectApplicationSnapshot(for: app)
+        guard snapshot.bundleIdentifier != nil,
+              snapshot != latestExternalAppSnapshot else {
+            return
+        }
         latestExternalAppSnapshot = snapshot
     }
 
@@ -1172,53 +1274,12 @@ final class AppState: ObservableObject, @unchecked Sendable {
         UserDefaults.standard.set(data, forKey: networkRoutingSettingsStorageKey)
     }
 
-    private static func loadCachedWordPressComSites(forKey key: String) -> [WPCOMSite] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([WPCOMSite].self, from: data) else {
-            return []
-        }
-
-        var seenSiteIDs = Set<Int>()
-        return decoded.filter { site in
-            site.id > 0 && seenSiteIDs.insert(site.id).inserted
-        }
-    }
-
     private func persistCachedWordPressComSites() {
-        guard let data = try? JSONEncoder().encode(wordpressComSites) else { return }
-        UserDefaults.standard.set(data, forKey: wordpressComSitesCacheStorageKey)
-    }
-
-    private static func loadCachedWordPressComUser(forKey key: String) -> WPCOMUser? {
-        guard let data = UserDefaults.standard.data(forKey: key) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(WPCOMUser.self, from: data)
+        quickLauncherIndexStore.replaceCachedWordPressComSites(wordpressComSites)
     }
 
     private func persistCachedWordPressComUser() {
-        guard let wordpressComUser else {
-            UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
-            return
-        }
-        guard let data = try? JSONEncoder().encode(wordpressComUser) else { return }
-        UserDefaults.standard.set(data, forKey: wordpressComUserCacheStorageKey)
-    }
-
-    private static func loadCachedWordPressAgentConversations(forKey key: String) -> [WordPressAgentConversation] {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([WordPressAgentConversation].self, from: data) else {
-            return []
-        }
-
-        let cacheableConversations: [WordPressAgentConversation] = decoded.compactMap { conversation in
-            guard !conversation.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-            var cachedConversation = conversation
-            cachedConversation.isSending = false
-            cachedConversation.errorMessage = nil
-            return cachedConversation
-        }
-        return deduplicatedWordPressAgentConversations(cacheableConversations)
+        quickLauncherIndexStore.replaceCachedWordPressComUser(wordpressComUser)
     }
 
     private static func deduplicatedWordPressAgentConversations(
@@ -1267,8 +1328,8 @@ final class AppState: ObservableObject, @unchecked Sendable {
         let cacheableConversations = Self.deduplicatedWordPressAgentConversations(
             wordpressAgentConversations.filter { !$0.isEmptyLocalDraft }
         )
-        let storageKey = wordpressAgentConversationsCacheStorageKey
         let debounceNanoseconds = wordpressAgentConversationsCacheDebounceNanoseconds
+        let cacheStore = quickLauncherIndexStore
 
         pendingWordPressAgentConversationsCacheTask?.cancel()
         wordpressAgentConversationsCacheGeneration += 1
@@ -1283,17 +1344,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
             }
             guard shouldPersist else { return }
 
-            guard let data = Self.encodedCachedWordPressAgentConversations(cacheableConversations),
-                  !Task.isCancelled else {
-                return
-            }
+            guard !Task.isCancelled else { return }
 
             let shouldStillPersist = await MainActor.run { [weak self] in
                 self?.wordpressAgentConversationsCacheGeneration == generation
             }
             guard shouldStillPersist else { return }
 
-            UserDefaults.standard.set(data, forKey: storageKey)
+            cacheStore.replaceCachedWordPressAgentConversations(cacheableConversations)
         }
     }
 
@@ -1301,12 +1359,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         pendingWordPressAgentConversationsCacheTask?.cancel()
         pendingWordPressAgentConversationsCacheTask = nil
         wordpressAgentConversationsCacheGeneration += 1
-    }
-
-    private static func encodedCachedWordPressAgentConversations(
-        _ conversations: [WordPressAgentConversation]
-    ) -> Data? {
-        try? JSONEncoder().encode(conversations)
     }
 
     private static func sortWordPressComAppSiteOverrides(_ lhs: WPCOMAppSiteOverride, _ rhs: WPCOMAppSiteOverride) -> Bool {
@@ -1344,6 +1396,19 @@ final class AppState: ObservableObject, @unchecked Sendable {
     func signOutOfWordPressCom() {
         wpcomClient.signOut()
         cancelPendingWordPressAgentConversationsCachePersistence()
+        quickLauncherIndexTasks.values.forEach { $0.cancel() }
+        quickLauncherIndexTasks = [:]
+        quickLauncherPrepareRefreshTask?.cancel()
+        quickLauncherPrepareRefreshTask = nil
+        quickLauncherSearchTask?.cancel()
+        quickLauncherSearchTask = nil
+        quickLauncherSearchGeneration += 1
+        quickLauncherIndexStore.clearAll()
+        quickLauncherResults = []
+        quickLauncherStatusMessage = nil
+        quickLauncherIndexedSiteIDs = []
+        quickLauncherIndexStats = .empty
+        isQuickLauncherIndexing = false
         isWordPressComSignedIn = false
         wordpressComSites = []
         wordpressComUser = nil
@@ -1362,9 +1427,6 @@ final class AppState: ObservableObject, @unchecked Sendable {
         hasLoadedWordPressAgentConversations = false
         wordpressAgentHistoryStatusMessage = nil
         transcribeSkill = nil
-        UserDefaults.standard.removeObject(forKey: wordpressComSitesCacheStorageKey)
-        UserDefaults.standard.removeObject(forKey: wordpressComUserCacheStorageKey)
-        UserDefaults.standard.removeObject(forKey: wordpressAgentConversationsCacheStorageKey)
         wordpressComStatusMessage = "Signed out"
     }
 
@@ -1409,6 +1471,7 @@ final class AppState: ObservableObject, @unchecked Sendable {
                 self.isRefreshingWordPressComSites = false
             }
             await discoverTranscribeSkillForSelectedSite()
+            await refreshQuickLauncherIndexForSelectedSiteIfNeeded()
             await refreshWordPressAgentConversations()
         } catch {
             await MainActor.run {
@@ -1751,10 +1814,14 @@ final class AppState: ObservableObject, @unchecked Sendable {
             return
         }
 
+        let cachedSkill = quickLauncherIndexStore.cachedTranscribeGuideline(siteID: siteID)
+        transcribeSkill = cachedSkill
         do {
-            transcribeSkill = try await wpcomClient.discoverTranscribeSkill(siteID: siteID)
+            let skill = try await wpcomClient.discoverTranscribeSkill(siteID: siteID)
+            quickLauncherIndexStore.replaceCachedTranscribeGuideline(skill, siteID: siteID)
+            transcribeSkill = skill
         } catch {
-            transcribeSkill = nil
+            transcribeSkill = cachedSkill
         }
     }
 
@@ -2114,6 +2181,499 @@ final class AppState: ObservableObject, @unchecked Sendable {
         NotificationCenter.default.post(name: .showImageUploadPicker, object: nil)
     }
 
+    func prepareQuickLauncher(query: String = "") {
+        guard quickLauncherEnabled else {
+            disableQuickLauncherRuntime()
+            return
+        }
+        updateQuickLauncherSearch(query)
+        quickLauncherPrepareRefreshTask?.cancel()
+        quickLauncherPrepareRefreshTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.refreshQuickLauncherIndexForSelectedSiteIfNeeded()
+            await MainActor.run { [weak self] in
+                self?.quickLauncherPrepareRefreshTask = nil
+            }
+        }
+    }
+
+    func updateQuickLauncherSearch(_ query: String) {
+        guard quickLauncherEnabled else {
+            quickLauncherSearchQuery = ""
+            quickLauncherSearchTask?.cancel()
+            quickLauncherSearchTask = nil
+            quickLauncherSearchGeneration += 1
+            quickLauncherResults = []
+            return
+        }
+        quickLauncherSearchQuery = query
+        quickLauncherSearchGeneration += 1
+        let generation = quickLauncherSearchGeneration
+        let activeSiteID = selectedWordPressComSiteID
+        let indexStore = quickLauncherIndexStore
+
+        quickLauncherSearchTask?.cancel()
+        quickLauncherSearchTask = Task.detached(priority: .userInitiated) { [weak self, indexStore] in
+            if !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try? await Task.sleep(nanoseconds: 35_000_000)
+            }
+            guard !Task.isCancelled else { return }
+
+            let results = indexStore.search(query: query, activeSiteID: activeSiteID)
+            guard !Task.isCancelled else { return }
+
+            await self?.finishQuickLauncherSearch(
+                generation: generation,
+                query: query,
+                activeSiteID: activeSiteID,
+                results: results
+            )
+        }
+    }
+
+    @MainActor
+    private func finishQuickLauncherSearch(
+        generation: Int,
+        query: String,
+        activeSiteID: Int?,
+        results: [QuickLauncherEntity]
+    ) {
+        guard quickLauncherSearchGeneration == generation,
+              quickLauncherSearchQuery == query,
+              selectedWordPressComSiteID == activeSiteID else {
+            return
+        }
+        quickLauncherResults = results
+        quickLauncherSearchTask = nil
+    }
+
+    @MainActor
+    func refreshQuickLauncherIndexForSelectedSiteIfNeeded(force: Bool = false, rebuild: Bool = false) async {
+        guard quickLauncherEnabled,
+              let selectedWordPressComSiteID else {
+            return
+        }
+        refreshQuickLauncherIndex(siteID: selectedWordPressComSiteID, force: force || rebuild, rebuild: rebuild)
+    }
+
+    func refreshQuickLauncherIndexStats() {
+        quickLauncherIndexStats = quickLauncherIndexStore.stats(siteID: selectedWordPressComSiteID)
+    }
+
+    private func handleQuickLauncherEnabledChange() {
+        if quickLauncherEnabled {
+            quickLauncherIndexStore.replaceSites(wordpressComSites)
+            replaceQuickLauncherMenuCommands()
+            seedQuickLauncherIndexForSelectedSite()
+            quickLauncherIndexedSiteIDs = quickLauncherIndexStore.indexedSiteIDs()
+            refreshQuickLauncherIndexStats()
+            updateQuickLauncherSearch(quickLauncherSearchQuery)
+            Task { await refreshQuickLauncherIndexForSelectedSiteIfNeeded() }
+        } else {
+            disableQuickLauncherRuntime()
+        }
+    }
+
+    private func disableQuickLauncherRuntime() {
+        quickLauncherPrepareRefreshTask?.cancel()
+        quickLauncherPrepareRefreshTask = nil
+        quickLauncherSearchTask?.cancel()
+        quickLauncherSearchTask = nil
+        quickLauncherSearchGeneration += 1
+        quickLauncherIndexTasks.values.forEach { $0.cancel() }
+        quickLauncherIndexTasks = [:]
+        quickLauncherResults = []
+        quickLauncherStatusMessage = nil
+        isQuickLauncherIndexing = false
+    }
+
+    @MainActor
+    func openQuickLauncherEntity(_ entity: QuickLauncherEntity) {
+        guard quickLauncherEnabled else { return }
+        quickLauncherIndexStore.recordOpen(entityID: entity.id)
+        updateQuickLauncherSearch(quickLauncherSearchQuery)
+
+        if entity.kind == .site {
+            guard let siteID = entity.siteID else { return }
+            selectedWordPressComSiteID = siteID
+            Task { await refreshQuickLauncherIndexForSelectedSiteIfNeeded() }
+            return
+        }
+
+        if entity.kind == .appCommand {
+            executeQuickLauncherCommand(entity)
+            return
+        }
+
+        guard let url = entity.openURL else {
+            errorMessage = "This launcher item does not have a URL to open."
+            return
+        }
+        openDetachedWordPressAgentPreview(
+            url: url,
+            title: entity.title,
+            siteID: entity.siteID ?? selectedWordPressComSiteID,
+            preferredViewMode: preferredDetachedPreviewMode(for: entity, url: url)
+        )
+    }
+
+    private func executeQuickLauncherCommand(_ entity: QuickLauncherEntity) {
+        guard let commandID = entity.remoteID else {
+            errorMessage = "This launcher command is missing an action."
+            return
+        }
+        NotificationCenter.default.post(
+            name: .executeQuickLauncherCommand,
+            object: nil,
+            userInfo: ["commandID": commandID]
+        )
+    }
+
+    private func refreshQuickLauncherIndex(siteID: Int, force: Bool, rebuild: Bool = false) {
+        guard quickLauncherEnabled,
+              isWordPressComSignedIn,
+              quickLauncherIndexTasks[siteID] == nil,
+              let site = wordpressComSites.first(where: { $0.id == siteID }) else {
+            refreshQuickLauncherIndexStats()
+            return
+        }
+        seedQuickLauncherIndex(for: site)
+        refreshQuickLauncherIndexStats()
+        updateQuickLauncherSearch(quickLauncherSearchQuery)
+        guard force || !quickLauncherIndexStore.isSiteFresh(siteID: siteID, maxAge: 10 * 60) else {
+            refreshQuickLauncherIndexStats()
+            return
+        }
+
+        let shouldFullRebuild = rebuild
+            || !quickLauncherUsesIncrementalIndexing
+            || !quickLauncherIndexStore.isSiteFresh(siteID: siteID, maxAge: 24 * 60 * 60, scope: "site-full")
+        let modifiedAfterByEndpoint = shouldFullRebuild
+            ? [:]
+            : quickLauncherIndexStore.latestModifiedByEndpoint(siteID: siteID)
+        let usesIncrementalSync = !shouldFullRebuild && !modifiedAfterByEndpoint.isEmpty
+
+        isQuickLauncherIndexing = true
+        quickLauncherStatusMessage = usesIncrementalSync
+            ? "Checking \(site.displayName) for changes..."
+            : "Indexing \(site.displayName)..."
+        let task = Task { [weak self] in
+            guard let self else { return }
+            let result = await self.wpcomClient.fetchQuickLauncherEntities(
+                for: site,
+                modifiedAfterByEndpoint: modifiedAfterByEndpoint
+            )
+            let wasCancelled = Task.isCancelled
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                guard !wasCancelled else {
+                    self.quickLauncherIndexTasks[siteID] = nil
+                    self.isQuickLauncherIndexing = !self.quickLauncherIndexTasks.isEmpty
+                    return
+                }
+                if usesIncrementalSync {
+                    self.quickLauncherIndexStore.mergeSiteContent(
+                        siteID: siteID,
+                        entities: result.entities,
+                        errors: result.errors
+                    )
+                } else {
+                    self.quickLauncherIndexStore.replaceSiteContent(
+                        siteID: siteID,
+                        entities: result.entities,
+                        errors: result.errors
+                    )
+                }
+                self.quickLauncherIndexedSiteIDs.insert(siteID)
+                self.refreshQuickLauncherIndexStats()
+                self.quickLauncherIndexTasks[siteID] = nil
+                self.isQuickLauncherIndexing = !self.quickLauncherIndexTasks.isEmpty
+                if self.selectedWordPressComSiteID == siteID {
+                    self.quickLauncherStatusMessage = result.errors.isEmpty
+                        ? nil
+                        : "Indexed \(site.displayName) with \(result.errors.count) REST warning\(result.errors.count == 1 ? "" : "s")."
+                    self.updateQuickLauncherSearch(self.quickLauncherSearchQuery)
+                } else if !self.isQuickLauncherIndexing {
+                    self.quickLauncherStatusMessage = nil
+                }
+            }
+        }
+        quickLauncherIndexTasks[siteID] = task
+    }
+
+    private func seedQuickLauncherIndexForSelectedSite() {
+        guard quickLauncherEnabled else { return }
+        guard let selectedWordPressComSiteID,
+              let site = wordpressComSites.first(where: { $0.id == selectedWordPressComSiteID }) else {
+            return
+        }
+        seedQuickLauncherIndex(for: site)
+    }
+
+    private func seedQuickLauncherIndex(for site: WPCOMSite) {
+        guard quickLauncherEnabled else { return }
+        quickLauncherIndexStore.upsertEntities(wpcomClient.quickLauncherSeedEntities(for: site))
+    }
+
+    private func replaceQuickLauncherMenuCommands() {
+        guard quickLauncherEnabled else { return }
+        quickLauncherIndexStore.replaceAppCommands(quickLauncherMenuCommands().map(\.entity))
+    }
+
+    private func quickLauncherMenuCommands() -> [QuickLauncherMenuCommand] {
+        var commands: [QuickLauncherMenuCommand] = []
+        let canUseWordPress = isWordPressComSignedIn && selectedWordPressComSiteID != nil
+        let isIdle = !isRecording && !isTranscribing
+
+        if availableAppUpdate != nil {
+            commands.append(QuickLauncherMenuCommand(
+                id: .downloadUpdate,
+                title: "Download Update",
+                menuPath: "Menu Bar",
+                aliases: ["update", "release", "install"]
+            ))
+        }
+
+        if !canUseWordPress {
+            commands.append(QuickLauncherMenuCommand(
+                id: .wordpressComSettings,
+                title: "WordPress.com Sign-In Needed",
+                menuPath: "Menu Bar",
+                aliases: ["sign in", "login", "account", "site settings"]
+            ))
+        }
+
+        if !hasAccessibility {
+            commands.append(QuickLauncherMenuCommand(
+                id: .accessibilitySettings,
+                title: "Accessibility Required",
+                menuPath: "Menu Bar",
+                aliases: ["permission", "privacy", "system settings"]
+            ))
+        }
+
+        if isWordPressComSignedIn && isIdle {
+            commands.append(QuickLauncherMenuCommand(
+                id: .quickAsk,
+                title: "Quick Ask WordPress Agent",
+                menuPath: "Menu Bar",
+                aliases: ["ask", "agent", "launcher", "raycast"]
+            ))
+        }
+
+        if canUseWordPress {
+            commands.append(QuickLauncherMenuCommand(
+                id: .addSticky,
+                title: "Add New Sticky",
+                menuPath: "Menu Bar > Stickies",
+                aliases: ["sticky note", "note"]
+            ))
+            commands.append(QuickLauncherMenuCommand(
+                id: .showStickies,
+                title: "Show Stickies",
+                menuPath: "Menu Bar > Stickies",
+                aliases: ["sticky notes", "notes"]
+            ))
+            commands.append(QuickLauncherMenuCommand(
+                id: .hideStickies,
+                title: "Hide Stickies",
+                menuPath: "Menu Bar > Stickies",
+                aliases: ["sticky notes", "notes"]
+            ))
+        }
+
+        if isIdle {
+            commands.append(QuickLauncherMenuCommand(
+                id: .captureScreenshot,
+                title: "Capture Screenshot",
+                menuPath: "Menu Bar",
+                aliases: ["screen capture", "image", "upload"]
+            ))
+        }
+
+        if isWordPressComSignedIn && isIdle {
+            commands.append(QuickLauncherMenuCommand(
+                id: .uploadImages,
+                title: "Upload Images",
+                menuPath: "Menu Bar",
+                aliases: ["photos", "media", "files"]
+            ))
+        }
+
+        if isWordPressComSignedIn,
+           !wordpressComSites.isEmpty,
+           let bundleIdentifier = latestExternalAppSnapshot?.bundleIdentifier {
+            commands.append(QuickLauncherMenuCommand(
+                id: .useDefaultSiteForCurrentApp,
+                title: "Use Default Site",
+                menuPath: "Menu Bar > App",
+                aliases: [bundleIdentifier, "current app", "default site"]
+            ))
+            commands.append(QuickLauncherMenuCommand(
+                id: .pinDefaultSiteToCurrentApp,
+                title: "Pin Default Site to This App",
+                menuPath: "Menu Bar > App",
+                aliases: [bundleIdentifier, "current app", "app site"]
+            ))
+            if wordPressComAppSiteOverride(for: bundleIdentifier) != nil {
+                commands.append(QuickLauncherMenuCommand(
+                    id: .removeCurrentAppSiteOverride,
+                    title: "Remove App-Specific Site",
+                    menuPath: "Menu Bar > App",
+                    aliases: [bundleIdentifier, "current app", "app site"]
+                ))
+            }
+            commands.append(QuickLauncherMenuCommand(
+                id: .manageSitesInSettings,
+                title: "Manage Sites in Settings",
+                menuPath: "Menu Bar > App",
+                aliases: [bundleIdentifier, "WordPress.com", "site settings"]
+            ))
+        }
+
+        if !isTranscribing {
+            commands.append(QuickLauncherMenuCommand(
+                id: .toggleDictation,
+                title: isRecording ? "Stop Recording" : "Start Dictating",
+                menuPath: "Menu Bar",
+                aliases: ["record", "dictation", "transcribe"]
+            ))
+        }
+
+        if !lastAgentResponse.isEmpty && isIdle {
+            commands.append(QuickLauncherMenuCommand(
+                id: .copyReply,
+                title: "Copy Reply",
+                menuPath: "Menu Bar > WordPress Agent",
+                aliases: ["copy agent response", "clipboard"]
+            ))
+        }
+
+        if isWordPressComSignedIn && isIdle {
+            commands.append(QuickLauncherMenuCommand(
+                id: .openAgent,
+                title: "Open WordPress Agent",
+                menuPath: "Menu Bar",
+                aliases: ["agent", "chat", "workspace"]
+            ))
+        }
+
+        if !lastTranscript.isEmpty && isIdle {
+            commands.append(QuickLauncherMenuCommand(
+                id: .copyAgain,
+                title: "Copy Again",
+                menuPath: "Menu Bar",
+                aliases: ["copy transcript", "clipboard"]
+            ))
+        }
+
+        commands.append(QuickLauncherMenuCommand(
+            id: .microphoneSystemDefault,
+            title: "System Default Microphone",
+            menuPath: "Menu Bar > Microphone",
+            aliases: ["audio input", "mic"]
+        ))
+        for device in availableMicrophones {
+            commands.append(QuickLauncherMenuCommand(
+                id: QuickLauncherMenuCommandID.microphoneDevicePrefix + device.uid,
+                title: device.name,
+                menuPath: "Menu Bar > Microphone",
+                aliases: ["microphone", "audio input", "mic"]
+            ))
+        }
+
+        if canUseWordPress && isIdle {
+            commands.append(QuickLauncherMenuCommand(
+                id: .draftFocus,
+                title: "Draft Focus Mode",
+                menuPath: "Menu Bar",
+                aliases: ["writing", "draft", "editor"]
+            ))
+        }
+
+        commands.append(QuickLauncherMenuCommand(
+            id: .settings,
+            title: "Settings",
+            menuPath: "Menu Bar",
+            aliases: ["preferences"]
+        ))
+
+        if isWordPressComSignedIn {
+            commands.append(QuickLauncherMenuCommand(
+                id: .refreshSites,
+                title: "Refresh WordPress.com Sites",
+                menuPath: "Settings > WordPress.com",
+                aliases: ["reload sites", "site list"]
+            ))
+        }
+
+        if canUseWordPress {
+            commands.append(QuickLauncherMenuCommand(
+                id: .refreshLauncherIndex,
+                title: "Refresh QuickLauncher Index",
+                menuPath: "Settings > Indexing",
+                aliases: ["sync", "changes", "index"]
+            ))
+            commands.append(QuickLauncherMenuCommand(
+                id: .reindexLauncher,
+                title: "Reindex Selected Site",
+                menuPath: "Settings > Indexing",
+                aliases: ["rebuild", "index", "SQLite"]
+            ))
+            commands.append(QuickLauncherMenuCommand(
+                id: .indexingSettings,
+                title: "Indexing Settings",
+                menuPath: "Settings",
+                aliases: ["SQLite", "launcher stats", "search index"]
+            ))
+        }
+
+        commands.append(QuickLauncherMenuCommand(
+            id: .quit,
+            title: "Quit WP Workspace",
+            menuPath: "Menu Bar",
+            aliases: ["exit"]
+        ))
+
+        return commands
+    }
+
+    private func cancelQuickLauncherIndexTasks(except selectedSiteID: Int?) {
+        let obsoleteSiteIDs = quickLauncherIndexTasks.keys.filter { $0 != selectedSiteID }
+        for siteID in obsoleteSiteIDs {
+            quickLauncherIndexTasks[siteID]?.cancel()
+            quickLauncherIndexTasks[siteID] = nil
+        }
+        isQuickLauncherIndexing = !quickLauncherIndexTasks.isEmpty
+        if !isQuickLauncherIndexing,
+           quickLauncherStatusMessage?.hasPrefix("Indexing ") == true
+            || quickLauncherStatusMessage?.hasPrefix("Checking ") == true {
+            quickLauncherStatusMessage = nil
+        }
+    }
+
+    private func preferredDetachedPreviewMode(
+        for entity: QuickLauncherEntity,
+        url: URL
+    ) -> WordPressAgentPreviewViewMode? {
+        if WordPressAgentPreviewURLResolver.viewMode(for: url) == .edit {
+            return .edit
+        }
+
+        guard entity.kind == .adminPanel || isWordPressAdminURL(url) else {
+            return nil
+        }
+        return .preview
+    }
+
+    private func isWordPressAdminURL(_ url: URL) -> Bool {
+        guard let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path.lowercased() else {
+            return false
+        }
+        return path == "/wp-admin" || path.hasPrefix("/wp-admin/")
+    }
+
     @MainActor
     func openWordPressAgentPreview(url: URL, title: String? = nil, conversationID: String? = nil) {
         let targetConversationID = conversationID
@@ -2131,6 +2691,22 @@ final class AppState: ObservableObject, @unchecked Sendable {
         }
         wordpressAgentPreview = preview
         showWordPressAgentWindow(conversationID: targetConversationID)
+    }
+
+    @MainActor
+    func openDetachedWordPressAgentPreview(
+        url: URL,
+        title: String? = nil,
+        siteID: Int? = nil,
+        preferredViewMode: WordPressAgentPreviewViewMode? = nil
+    ) {
+        let previewURL = WordPressAgentPreviewURLResolver.defaultOpenURL(forPossiblyBare: url) ?? url
+        detachedWordPressAgentPreview = WordPressAgentPreview(
+            url: previewURL,
+            title: title,
+            siteID: siteID ?? selectedWordPressComSiteID,
+            preferredViewMode: preferredViewMode
+        )
     }
 
     @MainActor
@@ -2196,6 +2772,11 @@ final class AppState: ObservableObject, @unchecked Sendable {
     }
 
     @MainActor
+    func closeDetachedWordPressAgentPreview() {
+        detachedWordPressAgentPreview = nil
+    }
+
+    @MainActor
     func updateWordPressAgentPreviewPage(
         previewID: UUID,
         currentURL: URL?,
@@ -2216,6 +2797,25 @@ final class AppState: ObservableObject, @unchecked Sendable {
         if let selectedWordPressAgentConversationID {
             wordpressAgentPreviewsByConversationID[selectedWordPressAgentConversationID] = updatedPreview
         }
+    }
+
+    @MainActor
+    func updateDetachedWordPressAgentPreviewPage(
+        previewID: UUID,
+        currentURL: URL?,
+        title: String?,
+        isLoading: Bool,
+        requiresAuthenticationHint: Bool
+    ) {
+        guard let preview = detachedWordPressAgentPreview, preview.id == previewID else { return }
+        let updatedPreview = preview.updatingCurrentPage(
+            url: currentURL,
+            title: title,
+            isLoading: isLoading,
+            requiresAuthenticationHint: requiresAuthenticationHint
+        )
+        guard updatedPreview != preview else { return }
+        detachedWordPressAgentPreview = updatedPreview
     }
 
     private func setActiveWordPressAgentConversation(_ conversationID: String?) {

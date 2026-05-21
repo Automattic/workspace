@@ -28,6 +28,7 @@ MENU_BAR_LOGO = Resources/MenuBarWordPressLogo.svg
 FONT_RESOURCES = $(shell find Resources/Fonts -type f 2>/dev/null | LC_ALL=C sort)
 DRAFT_FOCUS_THEME_RESOURCES = $(shell find Resources/DraftFocusThemes -type f 2>/dev/null | LC_ALL=C sort)
 DRAFT_FOCUS_SOUND_RESOURCES = $(shell find Resources/DraftFocusSounds -type f 2>/dev/null | LC_ALL=C sort)
+LDFLAGS = -lsqlite3
 
 .PHONY: all clean run icon dmg codesign-dmg notarize-app notarize-dmg zip release
 
@@ -41,13 +42,15 @@ ifeq ($(ARCH),universal)
 		-o "$(MACOS_DIR)/$(PRODUCT_NAME)-arm64" \
 		-sdk $(shell xcrun --show-sdk-path) \
 		-target arm64-apple-macosx13.0 \
-		$(SOURCES)
+		$(SOURCES) \
+		$(LDFLAGS)
 	swiftc \
 		-parse-as-library \
 		-o "$(MACOS_DIR)/$(PRODUCT_NAME)-x86_64" \
 		-sdk $(shell xcrun --show-sdk-path) \
 		-target x86_64-apple-macosx13.0 \
-		$(SOURCES)
+		$(SOURCES) \
+		$(LDFLAGS)
 	lipo -create -output "$(MACOS_DIR)/$(PRODUCT_NAME)" \
 		"$(MACOS_DIR)/$(PRODUCT_NAME)-arm64" \
 		"$(MACOS_DIR)/$(PRODUCT_NAME)-x86_64"
@@ -58,7 +61,8 @@ else
 		-o "$(MACOS_DIR)/$(PRODUCT_NAME)" \
 		-sdk $(shell xcrun --show-sdk-path) \
 		-target $(ARCH)-apple-macosx13.0 \
-		$(SOURCES)
+		$(SOURCES) \
+		$(LDFLAGS)
 endif
 	@cp Info.plist "$(CONTENTS)/"
 	@plutil -replace CFBundleName -string "$(PRODUCT_NAME)" "$(CONTENTS)/Info.plist"

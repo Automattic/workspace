@@ -332,7 +332,7 @@ struct WPCOMGuidelineTerm: Decodable, Equatable {
     let parent: Int?
 }
 
-struct WPCOMRESTTextField: Decodable, Equatable {
+struct WPCOMRESTTextField: Codable, Equatable {
     let raw: String?
     let rendered: String?
 
@@ -356,9 +356,15 @@ struct WPCOMRESTTextField: Decodable, Equatable {
         raw = try? container.decode(String.self, forKey: .raw)
         rendered = try? container.decode(String.self, forKey: .rendered)
     }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(raw, forKey: .raw)
+        try container.encodeIfPresent(rendered, forKey: .rendered)
+    }
 }
 
-struct WPCOMStickyGuideline: Decodable, Equatable {
+struct WPCOMStickyGuideline: Codable, Equatable {
     let id: Int
     let slug: String
     let status: String?
@@ -987,6 +993,296 @@ final class WPCOMClient: NSObject {
         }
     }
 
+    private struct DynamicCodingKey: CodingKey {
+        let stringValue: String
+        let intValue: Int?
+
+        init?(stringValue: String) {
+            self.stringValue = stringValue
+            intValue = nil
+        }
+
+        init?(intValue: Int) {
+            stringValue = "\(intValue)"
+            self.intValue = intValue
+        }
+    }
+
+    private struct LauncherRESTIndex: Decodable {
+        let namespaces: [String]
+        let routeKeys: Set<String>
+
+        private enum CodingKeys: String, CodingKey {
+            case namespaces
+            case routes
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            namespaces = (try? container.decode([String].self, forKey: .namespaces)) ?? []
+            let routesContainer = try? container.nestedContainer(keyedBy: DynamicCodingKey.self, forKey: .routes)
+            routeKeys = Set(routesContainer?.allKeys.map(\.stringValue) ?? [])
+        }
+
+        private init(namespaces: [String], routeKeys: Set<String>) {
+            self.namespaces = namespaces
+            self.routeKeys = routeKeys
+        }
+
+        static let empty = LauncherRESTIndex(namespaces: [], routeKeys: [])
+
+        var isEmpty: Bool {
+            namespaces.isEmpty && routeKeys.isEmpty
+        }
+
+        func hasNamespace(_ namespace: String) -> Bool {
+            namespaces.contains { $0.caseInsensitiveCompare(namespace) == .orderedSame }
+        }
+
+        func hasRoute(containing value: String) -> Bool {
+            routeKeys.contains { $0.localizedCaseInsensitiveContains(value) }
+        }
+    }
+
+    private struct LauncherPostType: Decodable {
+        let key: String?
+        let slug: String?
+        let name: String?
+        let restBase: String?
+        let description: String?
+        let hierarchical: Bool
+        let taxonomies: [String]
+        let labels: LauncherPostTypeLabels?
+
+        private enum CodingKeys: String, CodingKey {
+            case slug
+            case name
+            case restBase = "rest_base"
+            case description
+            case hierarchical
+            case taxonomies
+            case labels
+        }
+
+        var normalizedSlug: String {
+            WPCOMClient.nonEmpty(slug) ?? WPCOMClient.nonEmpty(key) ?? WPCOMClient.nonEmpty(restBase) ?? ""
+        }
+
+        var normalizedRestBase: String {
+            WPCOMClient.nonEmpty(restBase) ?? normalizedSlug
+        }
+
+        var displayName: String {
+            WPCOMClient.nonEmpty(labels?.name)
+                ?? WPCOMClient.nonEmpty(name)
+                ?? normalizedSlug.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+
+        var singularDisplayName: String {
+            WPCOMClient.nonEmpty(labels?.singularName)
+                ?? WPCOMClient.nonEmpty(name)
+                ?? normalizedSlug.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+
+        init(
+            key: String?,
+            slug: String?,
+            name: String?,
+            restBase: String?,
+            description: String?,
+            hierarchical: Bool,
+            taxonomies: [String],
+            labels: LauncherPostTypeLabels?
+        ) {
+            self.key = key
+            self.slug = slug
+            self.name = name
+            self.restBase = restBase
+            self.description = description
+            self.hierarchical = hierarchical
+            self.taxonomies = taxonomies
+            self.labels = labels
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            key = nil
+            slug = try? container.decode(String.self, forKey: .slug)
+            name = try? container.decode(String.self, forKey: .name)
+            restBase = try? container.decode(String.self, forKey: .restBase)
+            description = try? container.decode(String.self, forKey: .description)
+            hierarchical = (try? container.decode(Bool.self, forKey: .hierarchical)) ?? false
+            taxonomies = (try? container.decode([String].self, forKey: .taxonomies)) ?? []
+            labels = try? container.decode(LauncherPostTypeLabels.self, forKey: .labels)
+        }
+
+        func withKey(_ key: String) -> LauncherPostType {
+            LauncherPostType(
+                key: key,
+                slug: slug,
+                name: name,
+                restBase: restBase,
+                description: description,
+                hierarchical: hierarchical,
+                taxonomies: taxonomies,
+                labels: labels
+            )
+        }
+    }
+
+    private struct LauncherPostTypeLabels: Decodable {
+        let name: String?
+        let singularName: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case name
+            case singularName = "singular_name"
+        }
+    }
+
+    private struct LauncherTaxonomy: Decodable {
+        let key: String?
+        let slug: String?
+        let name: String?
+        let restBase: String?
+        let types: [String]
+        let hierarchical: Bool
+
+        private enum CodingKeys: String, CodingKey {
+            case slug
+            case name
+            case restBase = "rest_base"
+            case types
+            case hierarchical
+        }
+
+        var normalizedSlug: String {
+            WPCOMClient.nonEmpty(slug) ?? WPCOMClient.nonEmpty(key) ?? WPCOMClient.nonEmpty(restBase) ?? ""
+        }
+
+        var normalizedRestBase: String {
+            WPCOMClient.nonEmpty(restBase) ?? normalizedSlug
+        }
+
+        var displayName: String {
+            WPCOMClient.nonEmpty(name)
+                ?? normalizedSlug.replacingOccurrences(of: "_", with: " ").capitalized
+        }
+
+        init(
+            key: String?,
+            slug: String?,
+            name: String?,
+            restBase: String?,
+            types: [String],
+            hierarchical: Bool
+        ) {
+            self.key = key
+            self.slug = slug
+            self.name = name
+            self.restBase = restBase
+            self.types = types
+            self.hierarchical = hierarchical
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            key = nil
+            slug = try? container.decode(String.self, forKey: .slug)
+            name = try? container.decode(String.self, forKey: .name)
+            restBase = try? container.decode(String.self, forKey: .restBase)
+            types = (try? container.decode([String].self, forKey: .types)) ?? []
+            hierarchical = (try? container.decode(Bool.self, forKey: .hierarchical)) ?? false
+        }
+
+        func withKey(_ key: String) -> LauncherTaxonomy {
+            LauncherTaxonomy(
+                key: key,
+                slug: slug,
+                name: name,
+                restBase: restBase,
+                types: types,
+                hierarchical: hierarchical
+            )
+        }
+    }
+
+    private struct LauncherStatus: Decodable {
+        let name: String?
+        let slug: String?
+    }
+
+    private struct LauncherPostRecord: Decodable {
+        let id: Int
+        let slug: String?
+        let status: String?
+        let type: String?
+        let link: String?
+        let modified: String?
+        let modifiedGMT: String?
+        let title: WPCOMRESTTextField?
+        let parent: Int?
+        let wpGuidelineType: [Int]
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case slug
+            case status
+            case type
+            case link
+            case modified
+            case modifiedGMT = "modified_gmt"
+            case title
+            case parent
+            case wpGuidelineType = "wp_guideline_type"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = WPCOMClient.decodeFlexibleInt(container, forKey: .id) ?? 0
+            slug = try? container.decode(String.self, forKey: .slug)
+            status = try? container.decode(String.self, forKey: .status)
+            type = try? container.decode(String.self, forKey: .type)
+            link = try? container.decode(String.self, forKey: .link)
+            modified = try? container.decode(String.self, forKey: .modified)
+            modifiedGMT = try? container.decode(String.self, forKey: .modifiedGMT)
+            title = try? container.decode(WPCOMRESTTextField.self, forKey: .title)
+            parent = WPCOMClient.decodeFlexibleInt(container, forKey: .parent)
+            wpGuidelineType = (try? container.decode([Int].self, forKey: .wpGuidelineType)) ?? []
+        }
+    }
+
+    private struct LauncherTermRecord: Decodable {
+        let id: Int
+        let name: String
+        let slug: String?
+        let taxonomy: String?
+        let parent: Int?
+        let count: Int?
+        let link: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case slug
+            case taxonomy
+            case parent
+            case count
+            case link
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = WPCOMClient.decodeFlexibleInt(container, forKey: .id) ?? 0
+            name = (try? container.decode(String.self, forKey: .name)) ?? ""
+            slug = try? container.decode(String.self, forKey: .slug)
+            taxonomy = try? container.decode(String.self, forKey: .taxonomy)
+            parent = WPCOMClient.decodeFlexibleInt(container, forKey: .parent)
+            count = WPCOMClient.decodeFlexibleInt(container, forKey: .count)
+            link = try? container.decode(String.self, forKey: .link)
+        }
+    }
+
     private struct AtomicReadAccessCookie: Decodable {
         let name: String
         let value: String
@@ -1431,6 +1727,752 @@ final class WPCOMClient: NSObject {
         ]
         let data = try await authenticatedData(for: components.url!, timeoutInterval: 15)
         return try JSONDecoder().decode(WPCOMUser.self, from: data)
+    }
+
+    func fetchQuickLauncherEntities(
+        for site: WPCOMSite,
+        modifiedAfterByEndpoint: [String: String] = [:]
+    ) async -> QuickLauncherFetchResult {
+        let siteID = site.id
+        var entities: [QuickLauncherEntity] = []
+        var errors: [QuickLauncherSyncError] = []
+
+        let restIndex: LauncherRESTIndex
+        do {
+            restIndex = try await fetchLauncherRESTIndex(site: site)
+        } catch {
+            restIndex = .empty
+            errors.append(QuickLauncherSyncError(siteID: siteID, scope: "rest-index", message: error.localizedDescription))
+        }
+
+        let statuses: [String]
+        do {
+            statuses = try await fetchLauncherPostStatuses(siteID: siteID)
+        } catch {
+            statuses = Self.defaultLauncherPostStatuses
+            errors.append(QuickLauncherSyncError(siteID: siteID, scope: "statuses", message: error.localizedDescription))
+        }
+
+        let discoveredPostTypes: [LauncherPostType]
+        do {
+            discoveredPostTypes = try await fetchLauncherPostTypes(siteID: siteID)
+        } catch {
+            discoveredPostTypes = Self.defaultLauncherPostTypes
+            errors.append(QuickLauncherSyncError(siteID: siteID, scope: "types", message: error.localizedDescription))
+        }
+        let postTypes = Self.launcherVisiblePostTypes(discoveredPostTypes)
+        let excludedPostTypeIdentifiers = Self.launcherPrivacyExcludedPostTypeIdentifiers(discoveredPostTypes)
+
+        let discoveredTaxonomies: [LauncherTaxonomy]
+        do {
+            discoveredTaxonomies = try await fetchLauncherTaxonomies(siteID: siteID)
+        } catch {
+            discoveredTaxonomies = Self.defaultLauncherTaxonomies
+            errors.append(QuickLauncherSyncError(siteID: siteID, scope: "taxonomies", message: error.localizedDescription))
+        }
+        let taxonomies = Self.launcherVisibleTaxonomies(
+            discoveredTaxonomies,
+            excludedPostTypeIdentifiers: excludedPostTypeIdentifiers
+        )
+
+        let guidelineTypeTerms: [LauncherTermRecord]
+        do {
+            guidelineTypeTerms = try await fetchLauncherTerms(
+                siteID: siteID,
+                taxonomy: LauncherTaxonomy(
+                    key: "wp_guideline_type",
+                    slug: "wp_guideline_type",
+                    name: "Guideline Types",
+                    restBase: "wp_guideline_type",
+                    types: ["guideline"],
+                    hierarchical: true
+                )
+            )
+        } catch {
+            guidelineTypeTerms = []
+            errors.append(QuickLauncherSyncError(siteID: siteID, scope: "wp_guideline_type", message: error.localizedDescription))
+        }
+
+        entities.append(contentsOf: adminPanelEntities(site: site, postTypes: postTypes, restIndex: restIndex))
+
+        let guidelineClassifier = GuidelineTermClassifier(terms: guidelineTypeTerms)
+        for postType in postTypes where !postType.normalizedRestBase.isEmpty {
+            let endpoint = Self.launcherEndpoint(for: postType)
+            do {
+                let records = try await fetchLauncherPostRecords(
+                    siteID: siteID,
+                    postType: postType,
+                    statuses: statuses,
+                    modifiedAfter: modifiedAfterByEndpoint[endpoint]
+                )
+                entities.append(contentsOf: records.map {
+                    launcherEntity(site: site, postType: postType, record: $0, guidelineClassifier: guidelineClassifier)
+                })
+            } catch {
+                errors.append(QuickLauncherSyncError(
+                    siteID: siteID,
+                    scope: endpoint,
+                    message: error.localizedDescription
+                ))
+            }
+        }
+
+        for taxonomy in taxonomies where !taxonomy.normalizedRestBase.isEmpty {
+            do {
+                let terms = try await fetchLauncherTerms(siteID: siteID, taxonomy: taxonomy)
+                entities.append(contentsOf: terms.map {
+                    launcherEntity(site: site, taxonomy: taxonomy, term: $0)
+                })
+            } catch {
+                errors.append(QuickLauncherSyncError(
+                    siteID: siteID,
+                    scope: "wp/v2/\(taxonomy.normalizedRestBase)",
+                    message: error.localizedDescription
+                ))
+            }
+        }
+
+        return QuickLauncherFetchResult(entities: Self.deduplicatedQuickLauncherEntities(entities), errors: errors)
+    }
+
+    func quickLauncherSeedEntities(for site: WPCOMSite) -> [QuickLauncherEntity] {
+        Self.deduplicatedQuickLauncherEntities(
+            adminPanelEntities(site: site, postTypes: Self.defaultLauncherPostTypes, restIndex: .empty)
+        )
+    }
+
+    private func fetchLauncherRESTIndex(site: WPCOMSite) async throws -> LauncherRESTIndex {
+        let publicAPIURL = URL(string: "https://public-api.wordpress.com/wp/v2/sites/\(site.id)")!
+        if let data = try? await authenticatedData(for: publicAPIURL, timeoutInterval: 15),
+           let index = try? JSONDecoder().decode(LauncherRESTIndex.self, from: data),
+           !index.isEmpty {
+            return index
+        }
+
+        guard let restRootURL = site.restRootURL else {
+            throw WPCOMClientError.invalidResponse("Site REST index is unavailable.")
+        }
+        let data = try await unauthenticatedData(for: restRootURL, timeoutInterval: 15)
+        return try JSONDecoder().decode(LauncherRESTIndex.self, from: data)
+    }
+
+    private func fetchLauncherPostTypes(siteID: Int) async throws -> [LauncherPostType] {
+        var components = URLComponents(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/types")!
+        components.queryItems = [
+            URLQueryItem(name: "context", value: "edit")
+        ]
+        let data = try await authenticatedData(for: components.url!, timeoutInterval: 20)
+        let container = try JSONDecoder().decode([String: LauncherPostType].self, from: data)
+        let types = container.map { key, value in value.withKey(key) }
+            .filter { !$0.normalizedRestBase.isEmpty }
+        return Self.ensureRequiredPostTypes(in: types)
+    }
+
+    private func fetchLauncherTaxonomies(siteID: Int) async throws -> [LauncherTaxonomy] {
+        var components = URLComponents(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/taxonomies")!
+        components.queryItems = [
+            URLQueryItem(name: "context", value: "edit")
+        ]
+        let data = try await authenticatedData(for: components.url!, timeoutInterval: 20)
+        let container = try JSONDecoder().decode([String: LauncherTaxonomy].self, from: data)
+        let taxonomies = container.map { key, value in value.withKey(key) }
+            .filter { !$0.normalizedRestBase.isEmpty }
+        return Self.ensureRequiredTaxonomies(in: taxonomies)
+    }
+
+    private func fetchLauncherPostStatuses(siteID: Int) async throws -> [String] {
+        var components = URLComponents(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/statuses")!
+        components.queryItems = [
+            URLQueryItem(name: "context", value: "edit")
+        ]
+        let data = try await authenticatedData(for: components.url!, timeoutInterval: 15)
+        let container = try JSONDecoder().decode([String: LauncherStatus].self, from: data)
+        let statuses = container.compactMap { key, value in
+            Self.nonEmpty(value.slug) ?? Self.nonEmpty(key)
+        }
+        return statuses.isEmpty ? Self.defaultLauncherPostStatuses : statuses
+    }
+
+    private func fetchLauncherPostRecords(
+        siteID: Int,
+        postType: LauncherPostType,
+        statuses: [String],
+        modifiedAfter: String?
+    ) async throws -> [LauncherPostRecord] {
+        do {
+            return try await fetchLauncherPostRecords(
+                siteID: siteID,
+                postType: postType,
+                status: "any",
+                modifiedAfter: modifiedAfter
+            )
+        } catch {
+            let fallbackStatuses = Self.normalizedStatusFallback(statuses, postType: postType)
+            var recordsByID: [Int: LauncherPostRecord] = [:]
+            var firstError: Error = error
+            var didFetchAnyStatus = false
+            for status in fallbackStatuses {
+                do {
+                    let records = try await fetchLauncherPostRecords(
+                        siteID: siteID,
+                        postType: postType,
+                        status: status,
+                        modifiedAfter: modifiedAfter
+                    )
+                    didFetchAnyStatus = true
+                    for record in records where record.id > 0 {
+                        recordsByID[record.id] = record
+                    }
+                } catch {
+                    firstError = error
+                }
+            }
+            if didFetchAnyStatus {
+                return Array(recordsByID.values)
+            }
+            if modifiedAfter != nil {
+                return try await fetchLauncherPostRecords(
+                    siteID: siteID,
+                    postType: postType,
+                    statuses: statuses,
+                    modifiedAfter: nil
+                )
+            }
+            throw firstError
+        }
+    }
+
+    private func fetchLauncherPostRecords(
+        siteID: Int,
+        postType: LauncherPostType,
+        status: String,
+        modifiedAfter: String?
+    ) async throws -> [LauncherPostRecord] {
+        let route = postType.normalizedRestBase
+        var records: [LauncherPostRecord] = []
+        var page = 1
+        while true {
+            var components = URLComponents(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/\(route)")!
+            components.queryItems = [
+                URLQueryItem(name: "context", value: "edit"),
+                URLQueryItem(name: "status", value: status),
+                URLQueryItem(name: "per_page", value: "100"),
+                URLQueryItem(name: "page", value: "\(page)"),
+                URLQueryItem(name: "orderby", value: "modified"),
+                URLQueryItem(name: "order", value: "desc"),
+                URLQueryItem(
+                    name: "_fields",
+                    value: "id,slug,status,type,link,modified,modified_gmt,title,parent,wp_guideline_type"
+                )
+            ]
+            if let modifiedAfter = Self.modifiedAfterQueryValue(modifiedAfter) {
+                components.queryItems?.append(URLQueryItem(name: "modified_after", value: modifiedAfter))
+            }
+            do {
+                let data = try await authenticatedData(for: components.url!, timeoutInterval: 30)
+                let pageRecords = try JSONDecoder().decode([LauncherPostRecord].self, from: data)
+                records.append(contentsOf: pageRecords.filter { $0.id > 0 })
+                if pageRecords.count < 100 {
+                    break
+                }
+                page += 1
+            } catch {
+                if page > 1 {
+                    break
+                }
+                throw error
+            }
+        }
+        return records
+    }
+
+    private func fetchLauncherTerms(siteID: Int, taxonomy: LauncherTaxonomy) async throws -> [LauncherTermRecord] {
+        var terms: [LauncherTermRecord] = []
+        var page = 1
+        while true {
+            var components = URLComponents(string: "https://public-api.wordpress.com/wp/v2/sites/\(siteID)/\(taxonomy.normalizedRestBase)")!
+            components.queryItems = [
+                URLQueryItem(name: "context", value: "edit"),
+                URLQueryItem(name: "hide_empty", value: "false"),
+                URLQueryItem(name: "per_page", value: "100"),
+                URLQueryItem(name: "page", value: "\(page)"),
+                URLQueryItem(name: "orderby", value: "name"),
+                URLQueryItem(name: "order", value: "asc"),
+                URLQueryItem(name: "_fields", value: "id,name,slug,taxonomy,parent,count,link")
+            ]
+            do {
+                let data = try await authenticatedData(for: components.url!, timeoutInterval: 30)
+                let pageTerms = try JSONDecoder().decode([LauncherTermRecord].self, from: data)
+                terms.append(contentsOf: pageTerms.filter { $0.id > 0 })
+                if pageTerms.count < 100 {
+                    break
+                }
+                page += 1
+            } catch {
+                if page > 1 {
+                    break
+                }
+                throw error
+            }
+        }
+        return terms
+    }
+
+    private func adminPanelEntities(
+        site: WPCOMSite,
+        postTypes: [LauncherPostType],
+        restIndex: LauncherRESTIndex
+    ) -> [QuickLauncherEntity] {
+        var panels: [QuickLauncherEntity] = [
+            adminPanelEntity(site: site, slug: "dashboard", title: "Dashboard", path: "index.php", aliases: ["wp-admin"]),
+            adminPanelEntity(site: site, slug: "settings", title: "Settings", path: "options-general.php", aliases: ["options"])
+        ]
+
+        let postTypeSlugs = Set(postTypes.map(\.normalizedSlug))
+        if postTypeSlugs.contains("post") {
+            panels.append(adminPanelEntity(site: site, slug: "posts", title: "Posts", path: "edit.php", aliases: ["blog"]))
+        }
+        if postTypeSlugs.contains("page") {
+            panels.append(adminPanelEntity(site: site, slug: "pages", title: "Pages", path: "edit.php?post_type=page", aliases: []))
+        }
+        if postTypeSlugs.contains("attachment") || postTypes.contains(where: { $0.normalizedRestBase == "media" }) {
+            panels.append(adminPanelEntity(site: site, slug: "media", title: "Media Library", path: "upload.php", aliases: ["images", "files"]))
+        }
+        if restIndex.hasRoute(containing: "/wp/v2/comments") {
+            panels.append(adminPanelEntity(site: site, slug: "comments", title: "Comments", path: "edit-comments.php", aliases: []))
+        }
+        if restIndex.hasRoute(containing: "/wp/v2/users") {
+            panels.append(adminPanelEntity(site: site, slug: "users", title: "Users", path: "users.php", aliases: ["people"]))
+        }
+        if restIndex.hasRoute(containing: "/wp/v2/themes") {
+            panels.append(adminPanelEntity(site: site, slug: "themes", title: "Themes", path: "themes.php", aliases: ["appearance"]))
+        }
+        if restIndex.hasRoute(containing: "/wp/v2/plugins") {
+            panels.append(adminPanelEntity(site: site, slug: "plugins", title: "Plugins", path: "plugins.php", aliases: []))
+        }
+
+        for postType in postTypes {
+            let slug = postType.normalizedSlug
+            guard !["post", "page", "attachment"].contains(slug),
+                  !slug.hasPrefix("wp_") else {
+                continue
+            }
+            panels.append(adminPanelEntity(
+                site: site,
+                slug: "post-type-\(slug)",
+                title: postType.displayName,
+                path: "edit.php?post_type=\(slug)",
+                aliases: [slug, postType.singularDisplayName]
+            ))
+        }
+
+        if restIndex.hasNamespace("wc/v3") || restIndex.hasNamespace("wc/v2") || restIndex.hasRoute(containing: "/wc/") {
+            panels.append(contentsOf: woocommerceAdminPanelEntities(site: site))
+        }
+
+        return panels
+    }
+
+    private func woocommerceAdminPanelEntities(site: WPCOMSite) -> [QuickLauncherEntity] {
+        [
+            adminPanelEntity(site: site, slug: "woocommerce-home", title: "WooCommerce Home", path: "admin.php?page=wc-admin", aliases: ["commerce", "store"]),
+            adminPanelEntity(site: site, slug: "woocommerce-orders", title: "Orders", path: "admin.php?page=wc-orders", aliases: ["woocommerce"]),
+            adminPanelEntity(site: site, slug: "woocommerce-products", title: "Products", path: "edit.php?post_type=product", aliases: ["woocommerce"]),
+            adminPanelEntity(site: site, slug: "woocommerce-coupons", title: "Coupons", path: "edit.php?post_type=shop_coupon", aliases: ["woocommerce"]),
+            adminPanelEntity(site: site, slug: "woocommerce-customers", title: "Customers", path: "admin.php?page=wc-admin&path=/customers", aliases: ["woocommerce"]),
+            adminPanelEntity(site: site, slug: "woocommerce-analytics", title: "Analytics", path: "admin.php?page=wc-admin&path=/analytics/overview", aliases: ["woocommerce", "reports"]),
+            adminPanelEntity(site: site, slug: "woocommerce-settings", title: "WooCommerce Settings", path: "admin.php?page=wc-settings", aliases: ["woocommerce"])
+        ]
+    }
+
+    private func adminPanelEntity(
+        site: WPCOMSite,
+        slug: String,
+        title: String,
+        path: String,
+        aliases: [String]
+    ) -> QuickLauncherEntity {
+        let url = Self.wpAdminURL(site: site, pathAndQuery: path)
+        let searchableText = ([title, slug, site.displayName, "admin panel"] + aliases)
+            .joined(separator: " ")
+        return QuickLauncherEntity(
+            id: QuickLauncherEntity.makeID(siteID: site.id, kind: .adminPanel, route: "wp-admin", slug: slug),
+            siteID: site.id,
+            kind: .adminPanel,
+            remoteID: slug,
+            title: title,
+            subtitle: site.displayName,
+            slug: slug,
+            status: nil,
+            type: "wp-admin",
+            restRoute: nil,
+            endpoint: nil,
+            adminPath: path,
+            publicURLString: nil,
+            editURLString: url?.absoluteString,
+            modifiedGMT: nil,
+            parentIDs: [],
+            searchableText: searchableText
+        )
+    }
+
+    private func launcherEntity(
+        site: WPCOMSite,
+        postType: LauncherPostType,
+        record: LauncherPostRecord,
+        guidelineClassifier: GuidelineTermClassifier
+    ) -> QuickLauncherEntity {
+        let postTypeSlug = record.type.flatMap(Self.nonEmpty) ?? postType.normalizedSlug
+        let route = postType.normalizedRestBase
+        let kind: QuickLauncherEntityKind
+        if route == "guidelines" || postTypeSlug == "guideline" || postTypeSlug == "wp_guideline" {
+            kind = guidelineClassifier.kind(for: record)
+        } else {
+            switch postTypeSlug {
+            case "post":
+                kind = .post
+            case "page":
+                kind = .page
+            case "attachment":
+                kind = .media
+            default:
+                kind = .customPostType
+            }
+        }
+
+        let title = Self.plainText(record.title?.bestText)
+            ?? Self.nonEmpty(record.slug)
+            ?? "\(postType.singularDisplayName) #\(record.id)"
+        let editURL = Self.wpAdminPostEditURL(site: site, postID: record.id)
+        let parentIDs = record.parent.map { ["\($0)"] } ?? []
+        let subtitle = [postType.singularDisplayName, site.displayName]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " on ")
+        let searchableText = [
+            title,
+            record.slug,
+            record.status,
+            postTypeSlug,
+            postType.displayName,
+            kind.displayName,
+            site.displayName,
+            "\(record.id)"
+        ].compactMap { $0 }.joined(separator: " ")
+
+        return QuickLauncherEntity(
+            id: QuickLauncherEntity.makeID(siteID: site.id, kind: kind, route: route, remoteID: "\(record.id)"),
+            siteID: site.id,
+            kind: kind,
+            remoteID: "\(record.id)",
+            title: title,
+            subtitle: subtitle,
+            slug: record.slug,
+            status: record.status,
+            type: postTypeSlug,
+            restRoute: "/wp/v2/\(route)",
+            endpoint: "wp/v2/\(route)",
+            adminPath: editURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.path },
+            publicURLString: record.link,
+            editURLString: editURL?.absoluteString,
+            modifiedGMT: record.modifiedGMT ?? record.modified,
+            parentIDs: parentIDs,
+            searchableText: searchableText
+        )
+    }
+
+    private func launcherEntity(site: WPCOMSite, taxonomy: LauncherTaxonomy, term: LauncherTermRecord) -> QuickLauncherEntity {
+        let title = Self.plainText(term.name) ?? Self.nonEmpty(term.slug) ?? "\(taxonomy.displayName) #\(term.id)"
+        let editURL = Self.wpAdminTermEditURL(site: site, taxonomy: taxonomy.normalizedSlug, termID: term.id, postType: taxonomy.types.first)
+        let parentIDs = term.parent.map { ["\($0)"] } ?? []
+        let subtitle = [taxonomy.displayName, site.displayName]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: " on ")
+        let searchableText = [
+            title,
+            term.slug,
+            term.taxonomy,
+            taxonomy.normalizedSlug,
+            taxonomy.displayName,
+            site.displayName,
+            "\(term.id)",
+            term.count.map { "\($0)" }
+        ].compactMap { $0 }.joined(separator: " ")
+
+        return QuickLauncherEntity(
+            id: QuickLauncherEntity.makeID(siteID: site.id, kind: .taxonomyTerm, route: taxonomy.normalizedRestBase, remoteID: "\(term.id)"),
+            siteID: site.id,
+            kind: .taxonomyTerm,
+            remoteID: "\(term.id)",
+            title: title,
+            subtitle: subtitle,
+            slug: term.slug,
+            status: nil,
+            type: taxonomy.normalizedSlug,
+            restRoute: "/wp/v2/\(taxonomy.normalizedRestBase)",
+            endpoint: "wp/v2/\(taxonomy.normalizedRestBase)",
+            adminPath: editURL.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.path },
+            publicURLString: term.link,
+            editURLString: editURL?.absoluteString,
+            modifiedGMT: nil,
+            parentIDs: parentIDs,
+            searchableText: searchableText
+        )
+    }
+
+    private struct GuidelineTermClassifier {
+        private let artifactTermIDs: Set<Int>
+        private let skillTermIDs: Set<Int>
+
+        init(terms: [LauncherTermRecord]) {
+            artifactTermIDs = Self.descendantIDs(from: terms, rootSlug: "artifact")
+            skillTermIDs = Self.descendantIDs(from: terms, rootSlug: "skill")
+        }
+
+        func kind(for record: LauncherPostRecord) -> QuickLauncherEntityKind {
+            if record.slug == "transcribe" {
+                return .skill
+            }
+            if record.wpGuidelineType.contains(where: { skillTermIDs.contains($0) }) {
+                return .skill
+            }
+            if record.wpGuidelineType.contains(where: { artifactTermIDs.contains($0) }) {
+                return .artifact
+            }
+            return .guideline
+        }
+
+        private static func descendantIDs(from terms: [LauncherTermRecord], rootSlug: String) -> Set<Int> {
+            let childrenByParent = Dictionary(grouping: terms) { $0.parent ?? 0 }
+            let roots = terms.filter { $0.slug == rootSlug }.map(\.id)
+            var result = Set(roots)
+            var stack = roots
+            while let parent = stack.popLast() {
+                for child in childrenByParent[parent] ?? [] where result.insert(child.id).inserted {
+                    stack.append(child.id)
+                }
+            }
+            return result
+        }
+    }
+
+    private static let defaultLauncherPostStatuses = [
+        "publish", "future", "draft", "pending", "private", "trash", "inherit"
+    ]
+
+    private static let defaultLauncherPostTypes: [LauncherPostType] = [
+        LauncherPostType(key: "post", slug: "post", name: "Posts", restBase: "posts", description: nil, hierarchical: false, taxonomies: ["category", "post_tag"], labels: nil),
+        LauncherPostType(key: "page", slug: "page", name: "Pages", restBase: "pages", description: nil, hierarchical: true, taxonomies: [], labels: nil),
+        LauncherPostType(key: "attachment", slug: "attachment", name: "Media", restBase: "media", description: nil, hierarchical: false, taxonomies: [], labels: nil),
+        LauncherPostType(key: "guideline", slug: "guideline", name: "Guidelines", restBase: "guidelines", description: nil, hierarchical: false, taxonomies: ["wp_guideline_type"], labels: nil)
+    ]
+
+    private static let defaultLauncherTaxonomies: [LauncherTaxonomy] = [
+        LauncherTaxonomy(key: "category", slug: "category", name: "Categories", restBase: "categories", types: ["post"], hierarchical: true),
+        LauncherTaxonomy(key: "post_tag", slug: "post_tag", name: "Tags", restBase: "tags", types: ["post"], hierarchical: false),
+        LauncherTaxonomy(key: "wp_guideline_type", slug: "wp_guideline_type", name: "Guideline Types", restBase: "wp_guideline_type", types: ["guideline"], hierarchical: true)
+    ]
+
+    private static let launcherPrivacyExcludedCanonicalIdentifiers: Set<String> = [
+        "feedback",
+        "feedbacks",
+        "form_response",
+        "form_responses",
+        "form_entry",
+        "form_entries",
+        "wpforms_entry",
+        "wpforms_entries",
+        "ninja_forms_submission"
+    ]
+
+    private static func launcherVisiblePostTypes(_ postTypes: [LauncherPostType]) -> [LauncherPostType] {
+        postTypes.filter { !isLauncherPrivacyExcluded(postType: $0) }
+    }
+
+    private static func launcherVisibleTaxonomies(
+        _ taxonomies: [LauncherTaxonomy],
+        excludedPostTypeIdentifiers: Set<String>
+    ) -> [LauncherTaxonomy] {
+        taxonomies.filter { taxonomy in
+            guard !isLauncherPrivacyExcluded(taxonomy: taxonomy) else { return false }
+            let typeIdentifiers = taxonomy.types.compactMap(canonicalLauncherIdentifier)
+            guard !typeIdentifiers.isEmpty else { return true }
+            return !typeIdentifiers.allSatisfy { excludedPostTypeIdentifiers.contains($0) }
+        }
+    }
+
+    private static func launcherPrivacyExcludedPostTypeIdentifiers(_ postTypes: [LauncherPostType]) -> Set<String> {
+        let excludedPostTypes = postTypes.filter { isLauncherPrivacyExcluded(postType: $0) }
+        return Set(excludedPostTypes.flatMap { postType in
+            [
+                canonicalLauncherIdentifier(postType.key),
+                canonicalLauncherIdentifier(postType.slug),
+                canonicalLauncherIdentifier(postType.restBase),
+                canonicalLauncherIdentifier(postType.name),
+                canonicalLauncherIdentifier(postType.labels?.name),
+                canonicalLauncherIdentifier(postType.labels?.singularName)
+            ].compactMap { $0 }
+        })
+    }
+
+    private static func isLauncherPrivacyExcluded(postType: LauncherPostType) -> Bool {
+        [
+            postType.key,
+            postType.slug,
+            postType.restBase,
+            postType.name,
+            postType.labels?.name,
+            postType.labels?.singularName
+        ].contains { isLauncherPrivacyExcludedIdentifier($0) }
+    }
+
+    private static func isLauncherPrivacyExcluded(taxonomy: LauncherTaxonomy) -> Bool {
+        [
+            taxonomy.key,
+            taxonomy.slug,
+            taxonomy.restBase,
+            taxonomy.name
+        ].contains { isLauncherPrivacyExcludedIdentifier($0) }
+    }
+
+    private static func isLauncherPrivacyExcludedIdentifier(_ value: String?) -> Bool {
+        guard let canonical = canonicalLauncherIdentifier(value) else { return false }
+        if canonical.hasPrefix("jp_pay_") {
+            return true
+        }
+        if launcherPrivacyExcludedCanonicalIdentifiers.contains(canonical) {
+            return true
+        }
+        return canonical.contains("form_response")
+            || canonical.contains("form_responses")
+    }
+
+    private static func canonicalLauncherIdentifier(_ value: String?) -> String? {
+        guard let value = nonEmpty(value) else { return nil }
+        let canonical = value
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: " ", with: "_")
+        return nonEmpty(canonical)
+    }
+
+    private static func ensureRequiredPostTypes(in postTypes: [LauncherPostType]) -> [LauncherPostType] {
+        var bySlug = Dictionary(uniqueKeysWithValues: postTypes.map { ($0.normalizedSlug, $0) })
+        for postType in defaultLauncherPostTypes where bySlug[postType.normalizedSlug] == nil {
+            bySlug[postType.normalizedSlug] = postType
+        }
+        return bySlug.values.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private static func ensureRequiredTaxonomies(in taxonomies: [LauncherTaxonomy]) -> [LauncherTaxonomy] {
+        var bySlug = Dictionary(uniqueKeysWithValues: taxonomies.map { ($0.normalizedSlug, $0) })
+        for taxonomy in defaultLauncherTaxonomies where bySlug[taxonomy.normalizedSlug] == nil {
+            bySlug[taxonomy.normalizedSlug] = taxonomy
+        }
+        return bySlug.values.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private static func normalizedStatusFallback(_ statuses: [String], postType: LauncherPostType) -> [String] {
+        var seen = Set<String>()
+        let candidates = statuses + defaultLauncherPostStatuses + (postType.normalizedSlug == "attachment" ? ["inherit"] : [])
+        return candidates
+            .compactMap(nonEmpty)
+            .filter { seen.insert($0).inserted }
+    }
+
+    private static func launcherEndpoint(for postType: LauncherPostType) -> String {
+        "wp/v2/\(postType.normalizedRestBase)"
+    }
+
+    private static func modifiedAfterQueryValue(_ value: String?) -> String? {
+        guard let value = nonEmpty(value) else { return nil }
+        guard let date = restTimestampDate(from: value) else { return value }
+        return restTimestampString(from: date.addingTimeInterval(-120), preservesZulu: value.hasSuffix("Z"))
+    }
+
+    private static func restTimestampDate(from value: String) -> Date? {
+        let isoFormatter = ISO8601DateFormatter()
+        isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = isoFormatter.date(from: value) {
+            return date
+        }
+        isoFormatter.formatOptions = [.withInternetDateTime]
+        if let date = isoFormatter.date(from: value) {
+            return date
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter.date(from: value)
+    }
+
+    private static func restTimestampString(from date: Date, preservesZulu: Bool) -> String {
+        if preservesZulu {
+            let formatter = ISO8601DateFormatter()
+            formatter.formatOptions = [.withInternetDateTime]
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            return formatter.string(from: date)
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+        return formatter.string(from: date)
+    }
+
+    private static func deduplicatedQuickLauncherEntities(_ entities: [QuickLauncherEntity]) -> [QuickLauncherEntity] {
+        var seen = Set<String>()
+        return entities.filter { seen.insert($0.id).inserted }
+    }
+
+    private static func wpAdminPostEditURL(site: WPCOMSite, postID: Int) -> URL? {
+        wpAdminURL(site: site, pathAndQuery: "post.php?post=\(postID)&action=edit")
+    }
+
+    private static func wpAdminTermEditURL(site: WPCOMSite, taxonomy: String, termID: Int, postType: String?) -> URL? {
+        var query = "taxonomy=\(taxonomy)&tag_ID=\(termID)"
+        if let postType = nonEmpty(postType) {
+            query += "&post_type=\(postType)"
+        }
+        return wpAdminURL(site: site, pathAndQuery: "term.php?\(query)")
+    }
+
+    private static func wpAdminURL(site: WPCOMSite, pathAndQuery: String) -> URL? {
+        let baseURLString = site.url ?? site.slug.map { "https://\($0)" }
+        guard let baseURLString,
+              var components = URLComponents(string: baseURLString) else {
+            return nil
+        }
+
+        let parts = pathAndQuery.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        components.path = "/wp-admin/" + (parts.first.map(String.init) ?? "")
+        components.query = parts.count > 1 ? String(parts[1]) : nil
+        components.fragment = nil
+        return components.url
+    }
+
+    private static func plainText(_ value: String?) -> String? {
+        guard let value = nonEmpty(value) else { return nil }
+        let data = Data(value.utf8)
+        if let attributed = try? NSAttributedString(
+            data: data,
+            options: [
+                .documentType: NSAttributedString.DocumentType.html,
+                .characterEncoding: String.Encoding.utf8.rawValue
+            ],
+            documentAttributes: nil
+        ) {
+            let text = attributed.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
+        }
+        return value
     }
 
     func loadWordPressComAuthCookies(username: String, into cookieStore: WKHTTPCookieStore) async throws {
@@ -2073,6 +3115,35 @@ final class WPCOMClient: NSObject {
         let (data, response) = try await sessionProvider.data(for: request)
         try validate(response: response, data: data)
         return data
+    }
+
+    private func unauthenticatedData(for url: URL, timeoutInterval: TimeInterval?) async throws -> Data {
+        var request = URLRequest(url: url)
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
+        request.setValue(Self.wordPressAppUserAgent(), forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await sessionProvider.data(for: request)
+        try validate(response: response, data: data)
+        return data
+    }
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func decodeFlexibleInt<Key: CodingKey>(
+        _ container: KeyedDecodingContainer<Key>,
+        forKey key: Key
+    ) -> Int? {
+        if let value = try? container.decode(Int.self, forKey: key) {
+            return value
+        }
+        if let value = try? container.decode(String.self, forKey: key) {
+            return Int(value)
+        }
+        return nil
     }
 
     private func authenticatedJSONRequest<Body: Encodable, Response: Decodable>(

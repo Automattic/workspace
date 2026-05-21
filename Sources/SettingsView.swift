@@ -91,6 +91,8 @@ struct SettingsView: View {
                     GeneralSettingsView(tab: .transcription)
                 case .wordpressCom:
                     GeneralSettingsView(tab: .wordpressCom)
+                case .indexing:
+                    GeneralSettingsView(tab: .indexing)
                 case .network:
                     GeneralSettingsView(tab: .network)
                 case .wordpressAgent:
@@ -147,6 +149,10 @@ struct GeneralSettingsView: View {
                     SettingsCard("WordPress.com", icon: tab.icon, usesWordPressComLogo: true) {
                         wordpressComSection
                     }
+                case .indexing:
+                    SettingsCard("QuickLauncher Index", icon: tab.icon) {
+                        quickLauncherIndexingSection
+                    }
                 case .network:
                     SettingsCard("Network", icon: tab.icon) {
                         networkSection
@@ -164,6 +170,7 @@ struct GeneralSettingsView: View {
             appState.refreshLaunchAtLoginStatus()
             appState.refreshWordPressComSitesFromUI()
             appState.refreshAvailableSpeechVoices()
+            appState.refreshQuickLauncherIndexStats()
             if appState.hasElevenLabsAPIKey {
                 appState.refreshElevenLabsVoicesFromUI()
             }
@@ -250,6 +257,130 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var quickLauncherIndexingSection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Toggle("Enable QuickLauncher", isOn: $appState.quickLauncherEnabled)
+
+            Text("When enabled, typing @ in Quick Ask opens the local launcher for commands, site switching, WordPress content, and admin panels.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if !appState.quickLauncherEnabled {
+                Text("QuickLauncher is off. The existing SQLite cache is kept, but @ stays in normal Quick Ask mode and background launcher indexing is paused.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Group {
+                Divider()
+
+                Toggle("Use Smart Incremental Indexing", isOn: $appState.quickLauncherUsesIncrementalIndexing)
+                    .disabled(!appState.isWordPressComSignedIn)
+
+                Text("Normal refreshes ask REST-visible post types for rows changed since the local high-water mark. A full rebuild still runs on forced rebuilds and when the full index is older than a day.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 10) {
+                    Button {
+                        Task { await appState.refreshQuickLauncherIndexForSelectedSiteIfNeeded(force: true) }
+                    } label: {
+                        if appState.isQuickLauncherIndexing {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text("Indexing...")
+                            }
+                        } else {
+                            Label("Refresh Changes", systemImage: "arrow.clockwise")
+                        }
+                    }
+                    .disabled(!canManageQuickLauncherIndex)
+
+                    Button {
+                        Task { await appState.refreshQuickLauncherIndexForSelectedSiteIfNeeded(rebuild: true) }
+                    } label: {
+                        Label("Reindex Selected Site", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .disabled(!canManageQuickLauncherIndex)
+                    .help("Fully rebuild the selected site's local QuickLauncher index")
+
+                    Button {
+                        appState.refreshQuickLauncherIndexStats()
+                    } label: {
+                        Label("Update Stats", systemImage: "chart.bar.xaxis")
+                    }
+                }
+
+                Divider()
+
+                quickLauncherIndexStatsView
+            }
+            .disabled(!appState.quickLauncherEnabled)
+            .opacity(appState.quickLauncherEnabled ? 1 : 0.55)
+        }
+    }
+
+    private var quickLauncherIndexStatsView: some View {
+        let stats = appState.quickLauncherIndexStats
+        return VStack(alignment: .leading, spacing: 10) {
+            if let site = appState.selectedWordPressComSite {
+                indexStatRow("Selected site", value: site.displayName)
+            } else {
+                indexStatRow("Selected site", value: "None")
+            }
+
+            indexStatRow("Indexed items", value: "\(stats.totalEntityCount)")
+            indexStatRow("Remote cache rows", value: "\(stats.remoteCacheEntryCount)")
+            indexStatRow("Incremental cursors", value: "\(stats.endpointCursorCount)")
+            indexStatRow("Last refresh", value: formattedIndexDate(stats.lastSyncedAt))
+            indexStatRow("Last full rebuild", value: formattedIndexDate(stats.lastFullSyncedAt))
+            indexStatRow("Database size", value: formattedIndexSize(stats.databaseSizeBytes))
+
+            if let lastError = stats.lastError, !lastError.isEmpty {
+                Text(lastError)
+                    .font(.caption)
+                    .foregroundStyle(.yellow)
+                    .lineLimit(3)
+            }
+
+            if !stats.countsByKind.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Rows by Kind")
+                        .font(.caption.weight(.semibold))
+                    ForEach(QuickLauncherEntityKind.allCases, id: \.self) { kind in
+                        if let count = stats.countsByKind[kind], count > 0 {
+                            HStack {
+                                Label(kind.displayName, systemImage: kind.systemImageName)
+                                Spacer()
+                                Text("\(count)")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            .font(.caption)
+                        }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Database")
+                    .font(.caption.weight(.semibold))
+                Text(stats.databasePath)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private var canManageQuickLauncherIndex: Bool {
+        appState.quickLauncherEnabled
+            && appState.isWordPressComSignedIn
+            && appState.selectedWordPressComSiteID != nil
+            && !appState.isQuickLauncherIndexing
     }
 
     private var wordpressAgentSection: some View {
@@ -664,6 +795,33 @@ struct GeneralSettingsView: View {
 
     private func siteName(_ siteID: Int) -> String {
         appState.wordpressComSites.first(where: { $0.id == siteID })?.displayName ?? "Site \(siteID)"
+    }
+
+    private func indexStatRow(_ title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.caption.monospacedDigit())
+                .multilineTextAlignment(.trailing)
+        }
+        .font(.caption)
+    }
+
+    private func formattedIndexDate(_ date: Date?) -> String {
+        guard let date else { return "Never" }
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func formattedIndexSize(_ bytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
     }
 
     // MARK: Permissions

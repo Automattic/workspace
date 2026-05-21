@@ -7,6 +7,7 @@ extension Notification.Name {
     static let showWordPressAgentUtilityOverlay = Notification.Name("showWordPressAgentUtilityOverlay")
     static let showImageUploadPicker = Notification.Name("showImageUploadPicker")
     static let pasteImageIntoWordPressAgentComposer = Notification.Name("pasteImageIntoWordPressAgentComposer")
+    static let executeQuickLauncherCommand = Notification.Name("executeQuickLauncherCommand")
 }
 
 final class WordPressAgentComposerPasteRequest {

@@ -1,6 +1,15 @@
 import AppKit
 import SwiftUI
 
+enum AgentComposerCommand {
+    case submit
+    case moveUp
+    case moveDown
+    case pageUp
+    case pageDown
+    case cancel
+}
+
 struct AgentComposerTextView: NSViewRepresentable {
     @Binding var text: String
     @Binding var isFocused: Bool
@@ -11,6 +20,7 @@ struct AgentComposerTextView: NSViewRepresentable {
     let maximumHeight: CGFloat
     let isDisabled: Bool
     let onShiftSubmit: (() -> Void)?
+    var onCommand: ((AgentComposerCommand) -> Bool)? = nil
     let onSubmit: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -114,6 +124,21 @@ struct AgentComposerTextView: NSViewRepresentable {
             _ textView: NSTextView,
             doCommandBy commandSelector: Selector
         ) -> Bool {
+            switch commandSelector {
+            case #selector(NSResponder.moveUp(_:)):
+                return parent.onCommand?(.moveUp) ?? false
+            case #selector(NSResponder.moveDown(_:)):
+                return parent.onCommand?(.moveDown) ?? false
+            case #selector(NSResponder.pageUp(_:)):
+                return parent.onCommand?(.pageUp) ?? false
+            case #selector(NSResponder.pageDown(_:)):
+                return parent.onCommand?(.pageDown) ?? false
+            case #selector(NSResponder.cancelOperation(_:)):
+                return parent.onCommand?(.cancel) ?? false
+            default:
+                break
+            }
+
             guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
                 return false
             }
@@ -126,6 +151,9 @@ struct AgentComposerTextView: NSViewRepresentable {
                 return false
             }
 
+            if parent.onCommand?(.submit) == true {
+                return true
+            }
             parent.onSubmit()
             return true
         }

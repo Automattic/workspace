@@ -988,7 +988,7 @@ struct WordPressAgentWindowView: View {
     }
 }
 
-private struct WordPressAgentPreviewPanel: View {
+struct WordPressAgentPreviewPanel: View {
     @EnvironmentObject var appState: AppState
 
     let preview: WordPressAgentPreview
@@ -1006,7 +1006,7 @@ private struct WordPressAgentPreviewPanel: View {
         self.preview = preview
         self.onClose = onClose
         self.onPageUpdate = onPageUpdate
-        _previewMode = State(initialValue: Self.initialPreviewMode(for: preview.url))
+        _previewMode = State(initialValue: Self.initialPreviewMode(for: preview))
     }
 
     var body: some View {
@@ -1077,7 +1077,7 @@ private struct WordPressAgentPreviewPanel: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: preview.id) { _ in
-            previewMode = Self.initialPreviewMode(for: preview.url)
+            previewMode = Self.initialPreviewMode(for: preview)
         }
     }
 
@@ -1221,8 +1221,9 @@ private struct WordPressAgentPreviewPanel: View {
         )
     }
 
-    private static func initialPreviewMode(for url: URL) -> WordPressAgentPreviewViewMode {
-        WordPressAgentPreviewURLResolver.viewMode(for: url) == .edit ? .edit : .signedOut
+    private static func initialPreviewMode(for preview: WordPressAgentPreview) -> WordPressAgentPreviewViewMode {
+        preview.preferredViewMode
+            ?? (WordPressAgentPreviewURLResolver.viewMode(for: preview.url) == .edit ? .edit : .signedOut)
     }
 
     private func previewModeSwitch(modeURLs: WordPressAgentPreviewModeURLs) -> some View {
@@ -1285,6 +1286,32 @@ private struct WordPressAgentPreviewPanel: View {
             return "Show preview"
         case .edit:
             return "Edit post"
+        }
+    }
+}
+
+struct DetachedWordPressAgentPreviewWindowView: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        if let preview = appState.detachedWordPressAgentPreview {
+            WordPressAgentPreviewPanel(
+                preview: preview,
+                onClose: {
+                    appState.closeDetachedWordPressAgentPreview()
+                },
+                onPageUpdate: { previewID, currentURL, title, isLoading, requiresAuthenticationHint in
+                    appState.updateDetachedWordPressAgentPreviewPage(
+                        previewID: previewID,
+                        currentURL: currentURL,
+                        title: title,
+                        isLoading: isLoading,
+                        requiresAuthenticationHint: requiresAuthenticationHint
+                    )
+                }
+            )
+        } else {
+            Color(nsColor: .windowBackgroundColor)
         }
     }
 }

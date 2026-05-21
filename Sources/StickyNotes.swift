@@ -79,6 +79,7 @@ final class StickyNoteWindowManager {
     var onOpenArtifactRequested: ((Int, Int, String) -> Void)?
 
     private var client = WPCOMClient()
+    private let cacheStore: QuickLauncherIndexStore
     private var activeSiteID: Int?
     private var controllersBySite: [Int: [UUID: StickyNoteWindowController]] = [:]
     private var loadedSiteIDs: Set<Int> = []
@@ -90,6 +91,10 @@ final class StickyNoteWindowManager {
 
     var hasVisibleWindows: Bool {
         controllersBySite.values.flatMap(\.values).contains { $0.isVisible }
+    }
+
+    init(cacheStore: QuickLauncherIndexStore = QuickLauncherIndexStore()) {
+        self.cacheStore = cacheStore
     }
 
     func hasVisibleStickies(siteID: Int) -> Bool {
@@ -216,20 +221,44 @@ final class StickyNoteWindowManager {
             guard let stickyTermID = termIDs.last else {
                 return
             }
+            let cachedGuidelines = cacheStore.cachedStickyNoteGuidelines(siteID: siteID, stickyTermID: stickyTermID)
+            if let cachedGuidelines, !cachedGuidelines.isEmpty {
+                restore(guidelines: cachedGuidelines, siteID: siteID)
+            }
+
             let guidelines = try await client.fetchStickyNoteGuidelines(siteID: siteID, stickyTermID: stickyTermID)
+            cacheStore.replaceCachedStickyNoteGuidelines(guidelines, siteID: siteID, stickyTermID: stickyTermID)
             guard activeSiteID == siteID else { return }
 
-            loadedSiteIDs.insert(siteID)
-            for guideline in guidelines {
-                open(document: document(from: guideline, siteID: siteID))
-            }
-            showOpenControllers(for: siteID)
-            notifyVisibilityChanged()
+            restore(guidelines: guidelines, siteID: siteID)
         } catch is CancellationError {
             return
         } catch {
+            if restoreCachedStickies(siteID: siteID) {
+                return
+            }
             onError?("Could not load sticky notes: \(error.localizedDescription)")
         }
+    }
+
+    private func restoreCachedStickies(siteID: Int) -> Bool {
+        guard let stickyTermID = stickyTermIDsBySite[siteID]?.last
+            ?? cacheStore.cachedStickyNoteTermIDs(siteID: siteID)?.last,
+              let guidelines = cacheStore.cachedStickyNoteGuidelines(siteID: siteID, stickyTermID: stickyTermID) else {
+            return false
+        }
+        restore(guidelines: guidelines, siteID: siteID)
+        return true
+    }
+
+    private func restore(guidelines: [WPCOMStickyGuideline], siteID: Int) {
+        guard activeSiteID == siteID else { return }
+        loadedSiteIDs.insert(siteID)
+        for guideline in guidelines {
+            open(document: document(from: guideline, siteID: siteID))
+        }
+        showOpenControllers(for: siteID)
+        notifyVisibilityChanged()
     }
 
     private func open(document: StickyNoteDocument) {
@@ -335,11 +364,13 @@ final class StickyNoteWindowManager {
         let termIDs = try await stickyTermIDs(siteID: snapshot.siteID)
         var note = StickyNoteText.noteComponents(for: snapshot.body, fallbackTitle: snapshot.fallbackTitle)
         if note.title == snapshot.fallbackTitle,
-           let guidelineID = snapshot.guidelineID,
-           let current = try? await client.fetchStickyNoteGuideline(siteID: snapshot.siteID, guidelineID: guidelineID) {
-            note.title = StickyNoteText.titleField(for: current.title)
+           let guidelineID = snapshot.guidelineID {
+            if let current = (try? await client.fetchStickyNoteGuideline(siteID: snapshot.siteID, guidelineID: guidelineID))
+                ?? cacheStore.cachedStickyNoteGuideline(siteID: snapshot.siteID, guidelineID: guidelineID) {
+                note.title = StickyNoteText.titleField(for: current.title)
+            }
         }
-        return try await client.saveStickyNoteGuideline(
+        let saved = try await client.saveStickyNoteGuideline(
             siteID: snapshot.siteID,
             guidelineID: snapshot.guidelineID,
             title: note.title,
@@ -347,6 +378,8 @@ final class StickyNoteWindowManager {
             content: note.content,
             termIDs: termIDs
         )
+        cacheStore.upsertCachedStickyNoteGuideline(saved, siteID: snapshot.siteID, stickyTermID: termIDs.last)
+        return saved
     }
 
     private func stickyTermIDs(siteID: Int) async throws -> [Int] {
@@ -354,9 +387,22 @@ final class StickyNoteWindowManager {
             return cached
         }
 
-        let termIDs = try await client.resolveStickyNoteTermIDs(siteID: siteID)
-        stickyTermIDsBySite[siteID] = termIDs
-        return termIDs
+        let cachedTermIDs = cacheStore.cachedStickyNoteTermIDs(siteID: siteID)
+        if let cachedTermIDs, !cachedTermIDs.isEmpty {
+            stickyTermIDsBySite[siteID] = cachedTermIDs
+        }
+
+        do {
+            let termIDs = try await client.resolveStickyNoteTermIDs(siteID: siteID)
+            stickyTermIDsBySite[siteID] = termIDs
+            cacheStore.replaceCachedStickyNoteTermIDs(termIDs, siteID: siteID)
+            return termIDs
+        } catch {
+            if let cachedTermIDs, !cachedTermIDs.isEmpty {
+                return cachedTermIDs
+            }
+            throw error
+        }
     }
 
     private func controller(siteID: Int, guidelineID: Int?) -> StickyNoteWindowController? {

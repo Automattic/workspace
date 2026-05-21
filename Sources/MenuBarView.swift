@@ -72,6 +72,10 @@ struct MenuBarView: View {
                     .padding(.vertical, 6)
             }
 
+            if shouldShowQuickLauncherIndexStatus {
+                quickLauncherIndexStatus
+            }
+
             if shouldShowCurrentAppConfigSection {
                 Divider()
                 currentAppConfigSection
@@ -195,6 +199,56 @@ struct MenuBarView: View {
     }
 
     @ViewBuilder
+    private var quickLauncherIndexStatus: some View {
+        Divider()
+
+        HStack(spacing: 8) {
+            if appState.isQuickLauncherIndexing {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 14, height: 14)
+            } else {
+                Image(systemName: quickLauncherIndexStatusIconName)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(quickLauncherIndexStatusColor)
+                    .frame(width: 14, height: 14)
+            }
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(quickLauncherIndexStatusTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                if let detail = quickLauncherIndexStatusDetail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            Button {
+                Task { await appState.refreshQuickLauncherIndexForSelectedSiteIfNeeded(force: true) }
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Refresh QuickLauncher index")
+            .disabled(!appState.isWordPressComSignedIn || appState.selectedWordPressComSiteID == nil)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
+        .frame(maxWidth: 280, alignment: .leading)
+    }
+
+    @ViewBuilder
     private var currentAppConfigSection: some View {
         if let snapshot = appState.latestExternalAppSnapshot,
            let bundleIdentifier = snapshot.bundleIdentifier {
@@ -261,6 +315,28 @@ struct MenuBarView: View {
 
     private var shouldShowCurrentAppConfigSection: Bool {
         appState.isWordPressComSignedIn && !appState.wordpressComSites.isEmpty
+    }
+
+    private var shouldShowQuickLauncherIndexStatus: Bool {
+        appState.isWordPressComSignedIn
+            && appState.selectedWordPressComSiteID != nil
+            && appState.isQuickLauncherIndexing
+    }
+
+    private var quickLauncherIndexStatusTitle: String {
+        "Indexing QuickLauncher"
+    }
+
+    private var quickLauncherIndexStatusDetail: String? {
+        appState.quickLauncherStatusMessage ?? "Refreshing local WordPress index"
+    }
+
+    private var quickLauncherIndexStatusIconName: String {
+        "arrow.triangle.2.circlepath"
+    }
+
+    private var quickLauncherIndexStatusColor: Color {
+        .secondary
     }
 
     private func configSummary(site: WPCOMSite?, isOverride: Bool) -> String {

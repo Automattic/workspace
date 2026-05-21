@@ -2,7 +2,7 @@ import Foundation
 import ApplicationServices
 import AppKit
 
-struct AppSelectionSnapshot {
+struct AppSelectionSnapshot: Equatable {
     let appName: String?
     let bundleIdentifier: String?
     let windowTitle: String?
@@ -46,6 +46,15 @@ final class AppContextService {
             bundleIdentifier: app.bundleIdentifier,
             windowTitle: focusedWindowTitle(from: appElement) ?? app.localizedName,
             selectedText: rawSelectedText(from: appElement)
+        )
+    }
+
+    func collectApplicationSnapshot(for app: NSRunningApplication) -> AppSelectionSnapshot {
+        AppSelectionSnapshot(
+            appName: app.localizedName,
+            bundleIdentifier: app.bundleIdentifier,
+            windowTitle: nil,
+            selectedText: nil
         )
     }
 
