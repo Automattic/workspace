@@ -1,5 +1,5 @@
 ---
-name: whispress-preview-routing-debug
+name: wordpress-workspace-preview-routing-debug
 description: Debug WordPress Workspace Agent preview, edit-mode, authentication, proxy, and URL-routing behavior across simple WordPress.com, Jetpack, and Atomic sites. Use when preview panels load blank pages, show the wrong URL, leak effective preview URLs, fail authentication, or behave differently by site type.
 ---
 
@@ -19,10 +19,14 @@ Use this skill for preview/auth/editor-mode problems in the WordPress Agent wind
 3. Check site type and mode.
    - Simple WordPress.com, Jetpack, and Atomic sites can require different preview URL, unmapped-host, nonce, cookie, or read-access handling.
    - Distinguish signed-out view, authenticated preview, and editor mode.
-4. Reproduce with focused signals.
+4. Check proxy and routing overrides.
+   - Inspect `Sources/NetworkRoutingSettings.swift` and the WordPress.com auth-cookie bootstrap in `Sources/WPCOMClient.swift`.
+   - The app has a developer setting to bypass the macOS system proxy for sandbox routing, but the preview cookie-bootstrap flow intentionally uses a one-off direct session because proxy routing has produced wp-login.php 200 responses with empty auth cookies.
+   - Keep normal API traffic aligned with the user's network setting unless the code path is specifically browser-cookie infrastructure.
+5. Reproduce with focused signals.
    - Prefer app logs, existing preview loading states, and targeted code inspection before inventing shell-only repros.
    - Verify loading/preparation states, navigation updates, requested-vs-effective URL display, and mode switch behavior.
-5. Keep comments where behavior is non-obvious.
+6. Keep comments where behavior is non-obvious.
    - Proxy bypass, cookie bootstrap, nonce handling, and URL rewriting deserve concise code comments when changed.
 
 ## Output

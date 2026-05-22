@@ -58,14 +58,18 @@ Agent chat, screenshots, uploads, selected text, and voice input.
 
 - [docs/prd.md](docs/prd.md) is the living product and engineering guide for
   future WordPress Workspace development.
-- [.agents/skills](.agents/skills) contains repo-scoped Codex skills for PRD
-  drafting, doc consistency checks, release guidance, instruction mining,
-  preview debugging, endpoint smoke tests, and Agent UX review.
+- [.agents/skills](.agents/skills) contains repo-scoped Codex skills for
+  documentation consistency checks, release guidance, preview debugging,
+  endpoint smoke tests, and Agent UX review.
 
 Codex discovers repository skills from `.agents/skills` in the current working
 directory and parent directories up to the repository root. See the
 [Codex Agent Skills documentation](https://developers.openai.com/codex/skills)
 for the current discovery rules.
+
+Cross-project personal workflows, such as mining repeated instructions from
+Codex history, belong in local skills under `~/.codex/skills` rather than this
+repo.
 
 ## Build From Source
 

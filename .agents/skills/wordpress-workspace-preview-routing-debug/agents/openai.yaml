@@ -1,0 +1,6 @@
+interface:
+  display_name: "WordPress Workspace Preview"
+  short_description: "Debug Agent preview routing and auth"
+  default_prompt: "Use $wordpress-workspace-preview-routing-debug to diagnose this WordPress Workspace preview issue."
+policy:
+  allow_implicit_invocation: true

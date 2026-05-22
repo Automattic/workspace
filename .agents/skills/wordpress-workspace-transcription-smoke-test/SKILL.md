@@ -1,5 +1,5 @@
 ---
-name: whispress-transcription-smoke-test
+name: wordpress-workspace-transcription-smoke-test
 description: Run or explain WordPress Workspace transcription endpoint smoke tests using the no-dependency shell script, bearer tokens, site IDs/domains, audio files, selected text, app context, proxy, envelope, and verbose curl debugging. Use when testing `/wpcom/v2/sites/{site}/ai/transcription` or diagnosing transcription endpoint failures.
 ---
 
@@ -35,6 +35,6 @@ Use this skill for direct endpoint testing of WordPress.com transcription.
 ## Product Notes
 
 - The app uses the same site-scoped endpoint for dictation and selected-text command mode.
-- The selected site may provide a server-side `wp_guideline` skill with slug `transcribe`.
-- The endpoint may create the Transcription guideline on first use.
-- Saving artifacts is controlled by the `save_artifact` field in app requests.
+- The selected site may provide a server-side `wp_guideline` skill with slug `transcribe`, so connected apps share the same spelling, cleanup, and style rules.
+- The endpoint may create the Transcription guideline as a WordPress Guideline skill on first use.
+- Saving artifacts is controlled by the `save_artifact` field in app requests and should create WordPress Guideline artifacts on the selected site.

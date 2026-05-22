@@ -1,18 +1,22 @@
 # WordPress Workspace PRD
 
 Status: Living product and engineering guide
-Last reviewed: May 21, 2026
+Last reviewed: May 22, 2026
 
 ## Summary
 
 WordPress Workspace is a beta macOS menu bar app that turns a selected WordPress.com site into the working context for everyday Mac tasks. It gives users fast access to WordPress Agent, dictation, screenshot capture, image upload, selected-text transformation, and site switching without requiring them to rebuild their site context in a separate AI tool.
+
+The broader goal is to make WordPress usable as a personal cloud: a place where notes, media, drafts, guidelines, site knowledge, and Agent work can live under the user's account and site permissions. Workspace is one native gateway into that cloud and should grow as an all-in-one utility suite that offers WordPress-backed alternatives to everyday Mac workflows where a site-aware, cloud-owned result is useful.
 
 The Mac app should stay thin. WordPress.com owns authentication, site permissions, AI execution, Agent capabilities, media storage, and site-scoped guidelines. The app owns fast native entry points, local context capture, permissions, shortcuts, upload preparation, local launcher indexing, and a trustworthy bridge into the selected WordPress.com site.
 
 ## Goals
 
 - Make a WordPress.com site feel like a workspace on the Mac, not only a place where finished work is published.
+- Use WordPress as the user's personal cloud, with Workspace as one gateway for bringing Mac work into that cloud.
 - Reduce context copy-paste by grounding Agent chat, dictation, screenshots, uploads, and rewrites in the selected site.
+- Build toward a practical utility suite, not a single-purpose dictation or chat app.
 - Keep configuration site-scoped and shareable through WordPress.com, especially guidelines and skills.
 - Make first-run setup reliable: sign-in, default site selection, permissions, shortcuts, and a successful first useful action.
 - Make repeated work fast by indexing trusted site and app actions locally for QuickLauncher.
@@ -31,7 +35,8 @@ The Mac app should stay thin. WordPress.com owns authentication, site permission
 ## Product Principles
 
 - Site first: the selected WordPress.com site is the workspace context. Changing sites changes the context.
-- Native when it matters: use macOS shortcuts, menu bar access, drag and drop, screenshots, dictation, and paste flows where the browser would slow the user down.
+- WordPress-native by default: use WordPress archetypes and plugin-provided capabilities when possible, including posts, media, terms, guidelines, artifacts, skills, site roles, and site permissions.
+- Native when it matters: do not try to make all of WordPress native. Provide native bridges where the Mac adds leverage, especially media, screenshots, quick notes, dictation, selected text, shortcuts, and paste flows.
 - Configuration belongs on WordPress.com: shared guidelines, skills, permissions, and AI behavior should be managed where teams can audit and reuse them.
 - User actions should be inspectable: captures, uploads, and selected-text transformations should have clear initiation, failure, and completion states.
 - Keep the app honest about beta scope: frequent changes are expected, but core trust boundaries should not drift silently.
@@ -52,6 +57,7 @@ The Mac app should stay thin. WordPress.com owns authentication, site permission
 - The app fetches WordPress.com sites available to the Agent and augments them with site metadata when possible.
 - Users choose a default site for new chats, uploads, screenshots, and dictation.
 - Users can switch sites inside WordPress Agent when work belongs elsewhere.
+- The active site should never be guessed silently. The whole-app selected site persists until the user explicitly switches it, while site-bound apps or actions may deliberately move the current site as part of an explicit user handoff.
 - Starred sites, all-sites browsing, remembered collapse state, and per-app site routing should make repeated workflows fast without hiding the active context boundary.
 
 ### QuickLauncher and Local Indexing
@@ -81,8 +87,8 @@ The Mac app should stay thin. WordPress.com owns authentication, site permission
 - The transcription request sends audio, app context, selected text when relevant, client metadata, and the selected site to the WordPress.com transcription endpoint.
 - The app posts multipart audio to `/wpcom/v2/sites/{site}/ai/transcription`; the endpoint should stay useful for app smoke tests and other authenticated clients, not only this UI.
 - The selected site may provide a server-side `wp_guideline` skill with slug `transcribe`; the app discovers that guideline on launch and site switch, caches the result when available, and opens it from settings rather than hosting a local prompt editor.
-- If the `transcribe` guideline does not exist, the WordPress.com transcription endpoint may create it on first use.
-- Saving transcription artifacts is a user-visible setting, should default off unless deliberately changed, and should route to the selected site.
+- If the `transcribe` guideline does not exist, the WordPress.com transcription endpoint may create it as a WordPress Guideline skill on first use so every connected app can share the same spelling, cleanup, formatting, and style rules for that site.
+- Saving transcription artifacts is a user-visible setting, should default off unless deliberately changed, should route to the selected site, and should create WordPress Guideline artifacts rather than app-private records.
 
 ### Screenshots and Image Uploads
 
@@ -90,6 +96,7 @@ The Mac app should stay thin. WordPress.com owns authentication, site permission
 - Users can open, paste, or drag supported image files into the upload flow.
 - Image import can resize images, convert HEIC/HEIF to JPEG, adjust JPEG quality, anonymize filenames, copy resulting links, and open an Agent chat.
 - Uploads go to the selected site's WordPress.com media library through authenticated API calls.
+- Screenshot and image upload should move toward a CleanShot-like sharing loop: capture or import, upload to WordPress.com media, get a shareable link back immediately, and copy or hand that link to Agent without extra ceremony.
 
 ### Permissions and Trust Boundaries
 
@@ -103,7 +110,8 @@ The Mac app should stay thin. WordPress.com owns authentication, site permission
 - Development builds use `make` and produce `WP Workspace Dev.app` with bundle identifier `com.automattic.wpworkspace.dev`.
 - Release packaging uses `Tools/manual-release.sh`, a clean working tree, a universal build, OAuth secret injection, signing, and zip creation.
 - GitHub Actions release automation exists but is intentionally parked until signing, notarization, and release-channel policy are finalized.
-- Buildkite can run build, signing, notarization, zip, and DMG packaging through the existing pipeline.
+- Creating the GitHub Release triggers the Buildkite production build. After the build completes, the release owner downloads the artifact from Buildkite and attaches it to the GitHub Release unless automation has been explicitly changed.
+- Publishing a new release can surface the update badge in the app for existing users, so version, notes, and artifact readiness should be confirmed before the release becomes public.
 
 ## UX Requirements
 
@@ -114,19 +122,12 @@ The Mac app should stay thin. WordPress.com owns authentication, site permission
 - Error states should name the missing prerequisite and provide the next concrete action: sign in, choose a site, grant a macOS permission, refresh sites, retry upload, or inspect network settings.
 - Multi-site flows should always make the active site legible before sending audio, text, media, or Agent messages.
 
-## Metrics
+## Signals and Observability
 
-- Install to first successful sign-in.
-- Sign-in success and cancellation rates.
-- Default site selection success.
-- Permission grant rates for microphone, Accessibility, and Screen Recording.
-- Shortcut activation to recording start latency.
-- Dictation completion and transcription failure rates.
-- Screenshot capture and upload success rates.
-- Image import completion and media upload failure rates.
-- Agent message send success, response latency, and preview-open success.
-- QuickLauncher indexing success, search latency, and open-result success.
-- Crash-free sessions and update adoption.
+- Do not describe or add product telemetry as an existing capability. The app does not currently gather in-app metrics.
+- The main external usage signal currently available is WordPress.com OAuth sign-in count.
+- Use manual QA, endpoint smoke tests, release feedback, GitHub issues, and support reports to evaluate readiness until explicit analytics work is designed and approved.
+- Before adding telemetry, define the user-visible purpose, privacy boundary, opt-in or disclosure model, retention, and whether the signal belongs in the Mac app or WordPress.com.
 
 ## Test Scenarios
 

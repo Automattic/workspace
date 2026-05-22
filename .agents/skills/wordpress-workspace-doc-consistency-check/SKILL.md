@@ -1,5 +1,5 @@
 ---
-name: whispress-doc-consistency-check
+name: wordpress-workspace-doc-consistency-check
 description: Review WordPress Workspace README, PRD, release notes, public copy, and product documentation for consistency with this repo and the current WordPress Workspace positioning. Use when editing docs, checking copy drift, or reviewing product claims for this macOS app.
 ---
 
@@ -19,8 +19,10 @@ Use this skill to review documentation and product copy for drift.
    - Use `Sources/AppState.swift`, `Sources/AppDelegate.swift`, and UI files for user-facing flows.
 3. Check product vocabulary.
    - Prefer "WordPress Workspace" or "WP Workspace" only where the app already uses the shorter product name.
+   - Use the current product name in new public and repo-facing docs.
    - Describe the product as site-first and WordPress.com-aware.
    - Say "selected site" when explaining context boundaries.
+   - Prefer WordPress archetypes such as posts, media, terms, guidelines, artifacts, skills, site roles, and plugin-provided capabilities over parallel app-only concepts.
    - Use plain UI labels such as "Starred", "All Sites", and "Load previous conversations" when describing the Agent sidebar.
    - Keep WordPress Studio positioned as local site development, not daily live-site workspace work.
 4. Check non-goals and trust boundaries.
@@ -36,6 +38,7 @@ Use this skill to review documentation and product copy for drift.
 
 - Public Workspace positioning emphasizes beta status, inclusion with WordPress.com plans during beta, Agent access, dictation, screenshots, image upload, selected-text transformation, multiple sites, guidelines, skills, and WordPress.com permissions.
 - The repo currently requires macOS 13.0 in `Info.plist`; public launch copy says macOS 11 or later.
-- GitHub Actions release automation is parked; manual release is currently the documented local path.
+- GitHub Actions release automation is parked; Buildkite is the production build path for release artifacts.
 - Current builds link SQLite through `Makefile` and store local launcher/cache data in `Workspace.sqlite`.
 - Transcription smoke tests should use `Tools/wpcom-transcribe.sh` before inventing new endpoint tooling.
+- Do not claim in-app telemetry exists. Current external product signal is limited mostly to WordPress.com OAuth sign-in counts plus manual QA and release feedback.

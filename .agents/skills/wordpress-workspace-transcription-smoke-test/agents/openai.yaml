@@ -1,0 +1,6 @@
+interface:
+  display_name: "WordPress Workspace Transcribe"
+  short_description: "Smoke test the transcription endpoint"
+  default_prompt: "Use $wordpress-workspace-transcription-smoke-test to test the WordPress.com transcription endpoint."
+policy:
+  allow_implicit_invocation: true

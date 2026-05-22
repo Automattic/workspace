@@ -1,5 +1,5 @@
 ---
-name: whispress-release-runbook
+name: wordpress-workspace-release-runbook
 description: Guide WordPress Workspace build, packaging, signing, notarization, OAuth secret injection, release checks, and release documentation for this repo. Use when the user asks to build, package, sign, notarize, publish, smoke test, or explain release operations.
 ---
 
@@ -38,6 +38,7 @@ Use this skill for release, packaging, and build-operation work in this reposito
 - The script expects a clean working tree unless `--allow-dirty` is explicitly chosen.
 - The script uses `Info.plist` for `CFBundleShortVersionString` and creates or reuses tag `v<version>` when publishing.
 - Publishing requires `gh` and uploads the zip to GitHub Releases.
+- Creating or publishing a release can notify users through the app updater badge, so confirm version, notes, and artifact readiness before making the release public.
 
 ## CI and Notarization
 
@@ -46,6 +47,7 @@ Use this skill for release, packaging, and build-operation work in this reposito
 - `Tools/notarize.sh` handles notarization and stapling.
 - `.github/workflows/release.yml` is intentionally disabled behind manual dispatch.
 - `.buildkite/pipeline.yml` runs build, signing, notarization, and artifact collection on the mac queue.
+- Creating the GitHub Release triggers the Buildkite production build. After the build finishes, download the artifact from Buildkite and attach it to the GitHub Release manually unless automation has been explicitly changed.
 
 ## Smoke Test
 

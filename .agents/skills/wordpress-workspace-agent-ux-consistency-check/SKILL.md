@@ -1,5 +1,5 @@
 ---
-name: whispress-agent-ux-consistency-check
+name: wordpress-workspace-agent-ux-consistency-check
 description: Review WordPress Workspace Agent, site picker, conversation history, Quick Ask, QuickLauncher, settings, and sidebar UX for consistency with the repo's plain, explicit, site-scoped interaction patterns. Use when changing Agent UI, site switching, starred/all-sites behavior, conversation pagination, or settings copy.
 ---
 
@@ -15,6 +15,7 @@ Use this skill for recurring Agent and workspace UI patterns.
 2. Preserve site-scoped clarity.
    - Make the active selected site visible before sending text, audio, images, screenshots, or Agent messages.
    - Prefer explicit site switching over hidden "last site" behavior.
+   - When a user chooses a site-bound app or action, make that site handoff visible and update the current site deliberately.
    - Use Starred and All Sites as plain labels.
 3. Prefer calm, explicit controls.
    - Avoid hidden auto-loading when a visible action is clearer.

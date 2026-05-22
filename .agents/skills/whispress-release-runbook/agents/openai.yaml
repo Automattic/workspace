@@ -1,6 +1,0 @@
-interface:
-  display_name: "Whispress Release Runbook"
-  short_description: "Build and release WP Workspace safely"
-  default_prompt: "Use $whispress-release-runbook to prepare a WordPress Workspace release package."
-policy:
-  allow_implicit_invocation: true

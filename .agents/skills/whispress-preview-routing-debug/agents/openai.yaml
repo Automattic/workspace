@@ -1,6 +1,0 @@
-interface:
-  display_name: "Whispress Preview Debug"
-  short_description: "Debug Agent preview routing and auth"
-  default_prompt: "Use $whispress-preview-routing-debug to diagnose this WordPress Workspace preview issue."
-policy:
-  allow_implicit_invocation: true

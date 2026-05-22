@@ -1,6 +1,0 @@
-interface:
-  display_name: "Whispress Doc Check"
-  short_description: "Catch Workspace doc and copy drift"
-  default_prompt: "Use $whispress-doc-consistency-check to review this WordPress Workspace doc change."
-policy:
-  allow_implicit_invocation: true

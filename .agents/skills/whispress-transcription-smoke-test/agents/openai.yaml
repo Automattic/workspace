@@ -1,6 +1,0 @@
-interface:
-  display_name: "Whispress Transcription Smoke"
-  short_description: "Smoke test the transcription endpoint"
-  default_prompt: "Use $whispress-transcription-smoke-test to test the WordPress.com transcription endpoint."
-policy:
-  allow_implicit_invocation: true

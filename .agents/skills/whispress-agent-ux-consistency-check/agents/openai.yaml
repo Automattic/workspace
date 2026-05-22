@@ -1,6 +1,0 @@
-interface:
-  display_name: "Whispress Agent UX Check"
-  short_description: "Review Agent and site UX patterns"
-  default_prompt: "Use $whispress-agent-ux-consistency-check to review this WordPress Agent UI change."
-policy:
-  allow_implicit_invocation: true
