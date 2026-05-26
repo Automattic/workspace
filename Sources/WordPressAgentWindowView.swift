@@ -1578,22 +1578,27 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
                 isLoading: true,
                 requiresAuthenticationHint: false
             )
-            webView.load(URLRequest(url: initialPreviewURL))
 
             let siteID = siteID
             let appState = appState
             guard viewMode.usesAuthenticatedSession, let appState else {
+                webView.load(URLRequest(url: initialPreviewURL))
                 return
             }
 
-            // Auth prep should improve same-site previews, but it must never own
-            // the first paint. Load immediately, then reload with cookies/nonce
-            // if the prep finishes while this URL is still current.
+            // Authenticated previews should not first fall through wp-login.php:
+            // once that happens, reloading can refresh the login redirect instead
+            // of the original admin/preview URL.
+            showPreparationBackground(in: webView, visibleURL: requestedPreviewURL)
             loadTask = Task { @MainActor [weak self, weak webView] in
                 guard let webView else { return }
                 await appState.prepareWordPressAgentPreviewCookies(
                     siteID: siteID,
                     cookieStore: webView.configuration.websiteDataStore.httpCookieStore
+                )
+                let effectivePreviewURL = await appState.resolvedWordPressAgentPreviewURL(
+                    initialPreviewURL,
+                    siteID: siteID
                 )
                 guard !Task.isCancelled,
                       let self,
@@ -1602,13 +1607,17 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
                     return
                 }
 
+                self.isShowingPreparationBackground = false
+                self.internalEffectivePreviewURL = effectivePreviewURL.absoluteString == initialPreviewURL.absoluteString
+                    ? nil
+                    : effectivePreviewURL
                 self.reportPageUpdate(
                     url: requestedPreviewURL,
-                    title: webView.title,
+                    title: nil,
                     isLoading: true,
                     requiresAuthenticationHint: false
                 )
-                webView.reloadFromOrigin()
+                webView.load(URLRequest(url: effectivePreviewURL))
             }
         }
 
@@ -1653,8 +1662,8 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
             didFail navigation: WKNavigation!,
             withError error: Error
         ) {
-            os_log("Failed WordPress Agent preview navigation: %{public}@", log: wordpressAgentPreviewLog, type: .error, error.localizedDescription)
             guard !Self.isIgnorableNavigationFailure(error) else { return }
+            os_log("Failed WordPress Agent preview navigation: %{public}@", log: wordpressAgentPreviewLog, type: .error, error.localizedDescription)
             guard !isShowingPreparationBackground else {
                 reportPreparationBackgroundUpdate()
                 return
@@ -1668,8 +1677,8 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
             didFailProvisionalNavigation navigation: WKNavigation!,
             withError error: Error
         ) {
-            os_log("Failed provisional WordPress Agent preview navigation: %{public}@", log: wordpressAgentPreviewLog, type: .error, error.localizedDescription)
             guard !Self.isIgnorableNavigationFailure(error) else { return }
+            os_log("Failed provisional WordPress Agent preview navigation: %{public}@", log: wordpressAgentPreviewLog, type: .error, error.localizedDescription)
             guard !isShowingPreparationBackground else {
                 reportPreparationBackgroundUpdate()
                 return
@@ -1913,8 +1922,16 @@ private struct WordPressAgentWebPreview: NSViewRepresentable {
 
         private static func isIgnorableNavigationFailure(_ error: Error) -> Bool {
             let nsError = error as NSError
-            return nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled
+            if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
+                return true
+            }
+
+            return nsError.code == Self.webKitFrameLoadInterruptedByPolicyChangeErrorCode
+                && (nsError.domain == WKError.errorDomain || nsError.domain == Self.legacyWebKitErrorDomain)
         }
+
+        private static let legacyWebKitErrorDomain = "WebKitErrorDomain"
+        private static let webKitFrameLoadInterruptedByPolicyChangeErrorCode = 102
 
         private static func isDisplayablePreviewNavigationURL(_ url: URL) -> Bool {
             guard !isWordPressComPreviewInfrastructureURL(url) else {
