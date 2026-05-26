@@ -1,0 +1,6 @@
+interface:
+  display_name: "WordPress Workspace Docs"
+  short_description: "Catch Workspace doc and copy drift"
+  default_prompt: "Use $wordpress-workspace-doc-consistency-check to review this WordPress Workspace doc change."
+policy:
+  allow_implicit_invocation: true
